@@ -271,9 +271,14 @@ def try_claude(prompt):
             timeout=60
         )
         if r.status_code == 200:
-            text = r.json()["content"][0]["text"].strip()
-            print("[AI] Claude Haiku başarılı")
-            return {"success": True, "text": text, "model": "Claude Haiku 4.5"}
+            res  = r.json()
+            text = res["content"][0]["text"].strip()
+            in_t  = res.get("usage", {}).get("input_tokens", 0)
+            out_t = res.get("usage", {}).get("output_tokens", 0)
+            cost  = (in_t * 0.25 / 1_000_000) + (out_t * 1.25 / 1_000_000)
+            print(f"[AI] Claude Haiku token: {in_t}+{out_t} | ${cost:.6f}")
+            return {"success": True, "text": text, "model": "Claude Haiku 4.5",
+                    "in_tokens": in_t, "out_tokens": out_t, "cost": cost}
     except Exception as e:
         print(f"[CLAUDE] {e}")
     return {"success": False}
@@ -290,9 +295,14 @@ def try_groq(prompt):
                 timeout=60
             )
             if r.status_code == 200:
-                text = r.json()["choices"][0]["message"]["content"].strip()
-                print(f"[AI] Groq başarılı (key#{i})")
-                return {"success": True, "text": text, "model": "Groq Llama-4 Scout"}
+                res   = r.json()
+                text  = res["choices"][0]["message"]["content"].strip()
+                in_t  = res.get("usage", {}).get("prompt_tokens", 0)
+                out_t = res.get("usage", {}).get("completion_tokens", 0)
+                cost  = (in_t * 0.11 / 1_000_000) + (out_t * 0.34 / 1_000_000)
+                print(f"[AI] Groq token: {in_t}+{out_t} | ${cost:.6f}")
+                return {"success": True, "text": text, "model": "Groq Llama-4 Scout",
+                        "in_tokens": in_t, "out_tokens": out_t, "cost": cost}
         except Exception as e:
             print(f"[GROQ] key#{i}: {e}")
     return {"success": False}
@@ -305,7 +315,7 @@ def parse_json(text):
 
 def analyze_with_ai(chat_texts):
     if not chat_texts:
-        return None, "—"
+        return None, "—", {}
     prompt = build_prompt(chat_texts)
     for fn in [try_gemini, try_claude, try_groq]:
         result = fn(prompt)
@@ -313,8 +323,10 @@ def analyze_with_ai(chat_texts):
             data = parse_json(result["text"])
             if data:
                 data["model_used"] = result["model"]
-                return data, result["model"]
-    return None, "Hata"
+                usage = {"model": result["model"], "in_tokens": result.get("in_tokens",0),
+                         "out_tokens": result.get("out_tokens",0), "cost": result.get("cost",0)}
+                return data, result["model"], usage
+    return None, "Hata", {}
 
 # ── HTML ──────────────────────────────────────────────────────
 def line_color(cnt):
@@ -335,7 +347,7 @@ def brand_badge(brand, count=None):
         badge += f'<strong style="font-size:12px;color:#662D91;margin-left:3px;font-family:Montserrat,Arial,sans-serif;">{count}</strong>'
     return badge
 
-def build_html(ai_data, stats, date_str, model_used):
+def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
     total        = stats["total"]
     agent_count  = stats["agent_count"]
     bot_count    = stats["bot_count"]
@@ -422,6 +434,19 @@ def build_html(ai_data, stats, date_str, model_used):
 
     no_data_html = '<p style="color:#B28ABF;font-size:13px;font-family:Montserrat,Arial,sans-serif;">Şikayet/sorun tespit edilemedi.</p>'
 
+    # Token / maliyet satırı
+    if ai_usage and ai_usage.get("in_tokens"):
+        u = ai_usage
+        token_line = (
+            f'<p style="margin:5px 0 0;font-size:10px;color:#B28ABF;text-align:center;font-family:Montserrat,Arial,sans-serif;">'
+            f'{u["model"]} &nbsp;&middot;&nbsp; '
+            f'{u["in_tokens"]:,} input + {u["out_tokens"]:,} output token &nbsp;&middot;&nbsp; '
+            f'${u["cost"]:.6f}'
+            f'</p>'
+        )
+    else:
+        token_line = ""
+
     return f'''<!DOCTYPE html><html>
 <head><meta charset="UTF-8">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&display=swap" rel="stylesheet">
@@ -483,6 +508,7 @@ def build_html(ai_data, stats, date_str, model_used):
 <td style="padding:14px 28px;background-color:#2F1555;" bgcolor="#2F1555">
   <p style="margin:0;font-size:11px;color:#FFE600;font-weight:700;text-align:center;
      font-family:Montserrat,Arial,sans-serif;">POLIGON Chat Analyzer &nbsp;&middot;&nbsp; CS Günlük</p>
+  {token_line}
   <p style="margin:4px 0 0;font-size:10px;color:#B28ABF;text-align:center;
      font-family:Montserrat,Arial,sans-serif;">Developed by Erhan</p>
 </td></tr></table>
@@ -539,17 +565,17 @@ def main():
     agent_chats_list, chat_texts = process_chats(chats)
 
     # 4. AI analizi
-    ai_data, model_used = None, "—"
+    ai_data, model_used, ai_usage = None, "—", {}
     if chat_texts:
         print(f"\n[AI] {len(chat_texts)} chat analiz ediliyor...")
-        ai_data, model_used = analyze_with_ai(chat_texts)
+        ai_data, model_used, ai_usage = analyze_with_ai(chat_texts)
         if ai_data:
             print(f"[AI] {len(ai_data.get('categories', []))} şikayet kategorisi ({model_used})")
         else:
             print("[AI] Analiz başarısız")
 
     # 5. Rapor gönder
-    html = build_html(ai_data, stats, date_str, model_used)
+    html = build_html(ai_data, stats, date_str, model_used, ai_usage)
     send_email(html, date_str, stats)
     print(f"\n[DONE] Tamamlandı — {date_str}")
 
