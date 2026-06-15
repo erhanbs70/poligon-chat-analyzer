@@ -777,8 +777,8 @@ def run_daily(date_str=None):
     print(f"[DAILY] Tamamlandı — {metrics['total']} kayıt")
 
 def run_weekly(start_str=None, end_str=None):
+    import os, pytz
     if not end_str:
-        import pytz
         sofia = pytz.timezone("Europe/Sofia")
         now   = datetime.now(sofia)
         dow   = now.weekday()
@@ -795,16 +795,21 @@ def run_weekly(start_str=None, end_str=None):
     breakdown = daily_breakdown(rows, start_str, end_str)
     ai, model_used, ai_usage = analyze_with_ai(rows, "weekly", lbl) if rows else (None, "—", {})
 
-    html    = build_weekly_html(metrics, ai, lbl, breakdown, ai_usage)
-    subject = f"CS Feedback Haftalik | {lbl} | {metrics['total']} Kayit"
-    send_email(html, subject)
-    print(f"[WEEKLY] Tamamlandı — {metrics['total']} kayıt")
+    # Kısa HTML email body + Word attachment
+    html      = build_weekly_short_html(metrics, ai, lbl, breakdown, ai_usage)
+    word_path = build_word_doc(ai, metrics, lbl, breakdown, ai_usage)
+    word_name = f"CS_Feedback_Haftalik_{start_str}_{end_str}.docx"
+    subject   = f"CS Feedback Haftalik | {lbl} | {metrics['total']} Kayit"
+
+    send_email_v2(html, subject, word_path, word_name)
+    os.unlink(word_path)
+    print(f"[WEEKLY] Tamamlandi — {metrics['total']} kayit")
 
 def main():
     import sys
     mode = sys.argv[1] if len(sys.argv) > 1 else "daily"
     if mode == "weekly":
-        run_weekly_v2()
+        run_weekly()
     else:
         run_daily()
 
