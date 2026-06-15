@@ -322,7 +322,7 @@ def try_claude(prompt):
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": CLAUDE_KEY, "anthropic-version": "2023-06-01",
                      "content-type": "application/json"},
-            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 2000,
+            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 8000,
                   "messages": [{"role": "user", "content": prompt}]},
             timeout=60
         )
@@ -760,6 +760,29 @@ def send_email(html, subject):
         server.sendmail(GMAIL_USER, REPORT_EMAILS, msg.as_string())
     print(f"[EMAIL] Gönderildi: {', '.join(REPORT_EMAILS)}")
 
+def send_email_with_attachment(html, subject, attachment_path, attachment_name):
+    from email.mime.base import MIMEBase
+    from email import encoders
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"]    = GMAIL_USER
+    msg["To"]      = REPORT_EMAILS[0]
+    if len(REPORT_EMAILS) > 1:
+        msg["Cc"] = ", ".join(REPORT_EMAILS[1:])
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(html, "html", "utf-8"))
+    msg.attach(alt)
+    with open(attachment_path, "rb") as f:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(f.read())
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="{attachment_name}"')
+    msg.attach(part)
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(GMAIL_USER, GMAIL_PASS)
+        server.sendmail(GMAIL_USER, REPORT_EMAILS, msg.as_string())
+    print(f"[EMAIL] Attachment ile gönderildi: {', '.join(REPORT_EMAILS)}")
+
 # ── MAIN ──────────────────────────────────────────────────────
 def run_daily(date_str=None):
     if not date_str:
@@ -795,13 +818,13 @@ def run_weekly(start_str=None, end_str=None):
     breakdown = daily_breakdown(rows, start_str, end_str)
     ai, model_used, ai_usage = analyze_with_ai(rows, "weekly", lbl) if rows else (None, "—", {})
 
-    # Kısa HTML email body + Word attachment
-    html      = build_weekly_short_html(metrics, ai, lbl, breakdown, ai_usage)
-    word_path = build_word_doc(ai, metrics, lbl, breakdown, ai_usage)
+    html      = build_weekly_html(metrics, ai, lbl, breakdown, ai_usage)
     word_name = f"CS_Feedback_Haftalik_{start_str}_{end_str}.docx"
     subject   = f"CS Feedback Haftalik | {lbl} | {metrics['total']} Kayit"
 
-    send_email_v2(html, subject, word_path, word_name)
+    # Word attachment oluştur
+    word_path = build_word_doc(ai, metrics, lbl, breakdown, ai_usage)
+    send_email_with_attachment(html, subject, word_path, word_name)
     os.unlink(word_path)
     print(f"[WEEKLY] Tamamlandi — {metrics['total']} kayit")
 
