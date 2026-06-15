@@ -2,14 +2,13 @@ name: Feedback AI Report
 
 on:
   schedule:
-    - cron: '30 6 * * *'      # Günlük 08:30 Sofia (06:30 UTC yaz)
-    - cron: '0 7 * * 1'       # Haftalık Pazartesi 09:00 Sofia (07:00 UTC yaz)
+    - cron: '0 7 * * 1'   # Haftalık Pazartesi 09:00 Sofia (07:00 UTC yaz)
   workflow_dispatch:
     inputs:
       mode:
         description: 'daily veya weekly'
         required: false
-        default: 'daily'
+        default: 'weekly'
 
 jobs:
   report:
@@ -31,13 +30,8 @@ jobs:
       - name: Modu belirle
         id: mode
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
-          elif [ "$(date +%u)" = "1" ] && [ "$(date +%H)" = "07" ]; then
-            echo "mode=weekly" >> $GITHUB_OUTPUT
-          else
-            echo "mode=daily" >> $GITHUB_OUTPUT
-          fi
+          INPUT="${{ github.event.inputs.mode }}"
+          echo "mode=${INPUT:-weekly}" >> $GITHUB_OUTPUT
 
       - name: Feedback Raporu çalıştır
         env:
