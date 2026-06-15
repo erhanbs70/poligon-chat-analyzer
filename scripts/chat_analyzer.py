@@ -69,7 +69,7 @@ def fetch_cs_chats(date_str):
 
     while page <= 40:
         url = (f"{BASE_URL}&pageIndex={page}&pageSize=500"
-               f"&include=chatAgent&include=chatWrapup&include=postChatSurvey"
+               f"&include=chatAgent&include=chatWrapup&include=postChatSurvey&include=messages"
                f"&sortBy=startTime&sortOrder=asc")
         try:
             r = requests.post(
@@ -78,9 +78,9 @@ def fetch_cs_chats(date_str):
                 json={
                     "startTime": start_time,
                     "endTime": end_time,
-                    "departmentId": CS_DEPT_ID   # sadece CS departmanı
+                    "departmentId": CS_DEPT_ID
                 },
-                timeout=30
+                timeout=60
             )
             if r.status_code != 200:
                 print(f"[FETCH] HTTP {r.status_code} sayfa {page}: {r.text[:200]}")
@@ -100,7 +100,7 @@ def fetch_cs_chats(date_str):
             if len(chats) < 500:
                 break
             page += 1
-            time.sleep(0.3)
+            time.sleep(0.5)
 
         except Exception as e:
             print(f"[FETCH] Hata sayfa {page}: {e}")
@@ -109,15 +109,7 @@ def fetch_cs_chats(date_str):
     print(f"[FETCH] Toplam {len(all_chats)} CS chat çekildi")
     return all_chats
 
-def fetch_chat_messages(chat_id):
-    url = f"https://dash15.lively-chat.com/api/LiveChat/chats/{chat_id}?include=messages&siteId={SITE_ID}"
-    try:
-        r = requests.get(url, headers={"Authorization": get_auth()}, timeout=15)
-        if r.status_code == 200:
-            return r.json().get("messages", [])
-    except Exception as e:
-        print(f"[MSG] {chat_id} hata: {e}")
-    return []
+# fetch_chat_messages kaldırıldı — mesajlar artık chat listesiyle birlikte geliyor
 
 # ── HELPERS ──────────────────────────────────────────────────
 def get_agent_name(chat):
@@ -154,31 +146,28 @@ def get_visitor_messages(messages):
                 msgs.append(text)
     return " | ".join(msgs[:8])
 
-# ── PROCESS: sadece agent chatler, mesajları çek ─────────────
+# ── PROCESS: mesajlar zaten chat içinde geldi ────────────────
 def process_chats(chats):
     agent_chats = [c for c in chats if not is_bot_only(c)]
     print(f"[PROCESS] {len(chats)} CS chat → {len(agent_chats)} agent chat")
 
     chat_texts = []
-    for i, chat in enumerate(agent_chats):
+    for chat in agent_chats:
         chat_id = str(chat.get("id") or chat.get("chatId") or "")
         brand   = get_brand(chat)
 
-        messages = fetch_chat_messages(chat_id)
+        # Mesajlar zaten fetch sırasında geldi — ayrı API çağrısı yok
+        messages     = chat.get("messages") or []
         visitor_msgs = get_visitor_messages(messages)
 
         if not visitor_msgs or len(visitor_msgs) < 10:
             continue
 
         chat_texts.append({
-            "chat_id":     chat_id,
-            "brand":       brand,
+            "chat_id":      chat_id,
+            "brand":        brand,
             "visitor_msgs": visitor_msgs
         })
-
-        if (i + 1) % 100 == 0:
-            print(f"[PROCESS] {i+1}/{len(agent_chats)} işlendi ({len(chat_texts)} mesaj var)")
-        time.sleep(0.08)
 
     print(f"[PROCESS] {len(chat_texts)} chat mesajı AI için hazır")
     return agent_chats, chat_texts
