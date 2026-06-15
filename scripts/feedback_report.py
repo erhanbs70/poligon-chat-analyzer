@@ -819,13 +819,9 @@ def run_weekly(start_str=None, end_str=None):
     ai, model_used, ai_usage = analyze_with_ai(rows, "weekly", lbl) if rows else (None, "—", {})
 
     html      = build_weekly_html(metrics, ai, lbl, breakdown, ai_usage)
-    word_name = f"CS_Feedback_Haftalik_{start_str}_{end_str}.docx"
     subject   = f"CS Feedback Haftalik | {lbl} | {metrics['total']} Kayit"
 
-    # Word attachment oluştur
-    word_path = build_word_doc(ai, metrics, lbl, breakdown, ai_usage)
-    send_email_with_attachment(html, subject, word_path, word_name)
-    os.unlink(word_path)
+    send_email(html, subject)
     print(f"[WEEKLY] Tamamlandi — {metrics['total']} kayit")
 
 def main():
