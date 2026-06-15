@@ -25,7 +25,7 @@ jobs:
           python-version: '3.11'
 
       - name: Bağımlılıkları kur
-        run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client
+        run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client python-docx
 
       - name: Modu belirle
         id: mode
