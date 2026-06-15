@@ -230,7 +230,7 @@ def build_prompt(rows, mode, lbl):
     weekly = (mode == "weekly")
     lines = []
     for i, r in enumerate(rows):
-        fb = str(r["feedback"] or "-")  # tam metin
+        fb = str(r["feedback"] or "-") if mode == "daily" else str(r["feedback"] or "-")[:150]
         lines.append(f"{i+1}. [{r['brand']}] [{r['category']}] {r['username'] or '?'} | {fb}")
 
     schema = json.dumps({
@@ -804,9 +804,313 @@ def main():
     import sys
     mode = sys.argv[1] if len(sys.argv) > 1 else "daily"
     if mode == "weekly":
-        run_weekly()
+        run_weekly_v2()
     else:
         run_daily()
 
 if __name__ == "__main__":
     main()
+
+# ── WORD ATTACHMENT ───────────────────────────────────────────
+def build_word_doc(ai, metrics, lbl, breakdown, ai_usage):
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+    for section in doc.sections:
+        section.top_margin    = Inches(1)
+        section.bottom_margin = Inches(1)
+        section.left_margin   = Inches(1)
+        section.right_margin  = Inches(1)
+
+    # Başlık
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = title.add_run("CS Feedback Haftalik Rapor")
+    r.bold = True; r.font.size = Pt(18)
+    r.font.color.rgb = RGBColor(47, 21, 85)
+
+    sub = doc.add_paragraph()
+    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r2 = sub.add_run(lbl)
+    r2.font.size = Pt(12); r2.font.color.rgb = RGBColor(102, 45, 145)
+    doc.add_paragraph()
+
+    # Genel bakış
+    h = doc.add_heading("Genel Bakis", level=1)
+    for run in h.runs:
+        run.font.color.rgb = RGBColor(47, 21, 85)
+    tp = doc.add_paragraph()
+    tp.add_run(f"Toplam: {metrics['total']} kayit   |   ")
+    for b in ["SB", "BS", "TB"]:
+        cnt = metrics["by_brand"].get(b, 0)
+        if cnt:
+            tp.add_run(f"{b}: {cnt}   ")
+
+    # Kategori tablosu
+    doc.add_paragraph()
+    h2 = doc.add_heading("Konu Dagilimi", level=2)
+    for run in h2.runs:
+        run.font.color.rgb = RGBColor(102, 45, 145)
+    if metrics.get("category_ranked"):
+        tbl = doc.add_table(rows=1, cols=2)
+        tbl.style = "Table Grid"
+        hdr = tbl.rows[0].cells
+        hdr[0].text = "Kategori"; hdr[1].text = "Adet"
+        for cell in hdr:
+            for run in cell.paragraphs[0].runs:
+                run.bold = True
+        for item in metrics["category_ranked"]:
+            row = tbl.add_row().cells
+            row[0].text = item["cat"]
+            row[1].text = str(item["cnt"])
+    doc.add_paragraph()
+
+    # AI kategorileri
+    if ai and ai.get("categories"):
+        h3 = doc.add_heading("AI Analizi — Detayli Konular", level=1)
+        for run in h3.runs:
+            run.font.color.rgb = RGBColor(47, 21, 85)
+        cats = sorted(ai["categories"], key=lambda x: x.get("count", 0), reverse=True)
+        for cat in cats:
+            cnt = cat.get("count", 0)
+            p = doc.add_paragraph()
+            r = p.add_run(f"{cat.get('name','Konu')}  —  {cnt}")
+            r.bold = True; r.font.size = Pt(13)
+            r.font.color.rgb = RGBColor(47, 21, 85)
+
+            if cat.get("brandBreakdown"):
+                bd_text = "  |  ".join([f"{bd['brand']}: {bd['count']}" for bd in cat["brandBreakdown"]])
+                bp = doc.add_paragraph()
+                br = bp.add_run(f"Marka: {bd_text}")
+                br.font.size = Pt(10); br.font.color.rgb = RGBColor(124, 58, 237)
+
+            if cat.get("users"):
+                users_text = ",  ".join([u["username"] for u in cat["users"]])
+                up = doc.add_paragraph()
+                ur = up.add_run(f"Uyeler: {users_text}")
+                ur.font.size = Pt(10); ur.italic = True
+
+            if cat.get("shortNote"):
+                np2 = doc.add_paragraph()
+                nr = np2.add_run(cat["shortNote"])
+                nr.font.size = Pt(11); nr.italic = True
+                nr.font.color.rgb = RGBColor(102, 45, 145)
+            doc.add_paragraph()
+
+    # Kritik
+    if ai and ai.get("critical"):
+        h4 = doc.add_heading("Kritik Kayitlar", level=1)
+        for run in h4.runs:
+            run.font.color.rgb = RGBColor(47, 21, 85)
+        for u in ai["critical"]:
+            p = doc.add_paragraph()
+            r1 = p.add_run(f"{u.get('username','-')} ({u.get('brand','-')}): ")
+            r1.bold = True; r1.font.color.rgb = RGBColor(47, 21, 85)
+            r2 = p.add_run(u.get("reason", "-"))
+            r2.font.color.rgb = RGBColor(102, 45, 145)
+        doc.add_paragraph()
+
+    # Aksiyonlar
+    if ai and ai.get("actionItems"):
+        h5 = doc.add_heading("Onerilen Aksiyonlar", level=1)
+        for run in h5.runs:
+            run.font.color.rgb = RGBColor(47, 21, 85)
+        for i, a in enumerate(ai["actionItems"]):
+            p = doc.add_paragraph()
+            p.add_run(f"{i+1}. {a}").font.size = Pt(11)
+        doc.add_paragraph()
+
+    # Özet
+    if ai and ai.get("summary"):
+        h6 = doc.add_heading("Ozet", level=1)
+        for run in h6.runs:
+            run.font.color.rgb = RGBColor(47, 21, 85)
+        doc.add_paragraph(ai["summary"])
+        doc.add_paragraph()
+
+    # Tekrar eden üyeler
+    if metrics.get("repeat_users"):
+        h7 = doc.add_heading("Tekrar Eden Uyeler", level=1)
+        for run in h7.runs:
+            run.font.color.rgb = RGBColor(47, 21, 85)
+        tbl2 = doc.add_table(rows=1, cols=3)
+        tbl2.style = "Table Grid"
+        hdr2 = tbl2.rows[0].cells
+        hdr2[0].text = "Kullanici"; hdr2[1].text = "Marka"; hdr2[2].text = "Kayit"
+        for cell in hdr2:
+            for run in cell.paragraphs[0].runs:
+                run.bold = True
+        for u in metrics["repeat_users"][:20]:
+            row = tbl2.add_row().cells
+            row[0].text = u["username"]
+            row[1].text = u["brand"]
+            row[2].text = f"{u['count']}x"
+
+    # Footer
+    doc.add_paragraph()
+    fp = doc.add_paragraph()
+    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    fr = fp.add_run("POLIGON CS Feedback AI Report — Haftalik")
+    fr.font.size = Pt(9); fr.font.color.rgb = RGBColor(178, 138, 191)
+    if ai_usage and ai_usage.get("model"):
+        u = ai_usage
+        fp2 = doc.add_paragraph()
+        fp2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        fr2 = fp2.add_run(f"{u['model']}  |  {u.get('in_tokens',0):,}+{u.get('out_tokens',0):,} token  |  ${u.get('cost',0):.6f}")
+        fr2.font.size = Pt(9); fr2.font.color.rgb = RGBColor(178, 138, 191)
+
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+    doc.save(tmp.name)
+    return tmp.name
+
+# ── KISA HAFTALIK HTML (email body) ───────────────────────────
+def build_weekly_short_html(metrics, ai, week_label, breakdown, ai_usage):
+    brand_parts = ""
+    for b in BRANDS:
+        cnt = metrics["by_brand"].get(b, 0)
+        if cnt:
+            brand_parts += f'<span style="font-size:12px;color:#ffffff;font-weight:700;margin:0 8px;font-family:Montserrat,Arial,sans-serif;">{cnt} <span style="color:#e9d5ff;font-weight:600;font-size:11px;">{b}</span></span>'
+
+    cat_parts = '<span style="color:rgba(233,213,255,0.5);margin:0 6px;">&middot;</span>'.join(
+        f'<span style="font-size:10px;color:{C["yellow"]};font-weight:600;font-family:Montserrat,Arial,sans-serif;">{item["cat"]} {item["cnt"]}</span>'
+        for item in metrics["category_ranked"][:5]
+    )
+
+    max_day = max((d["count"] for d in breakdown), default=1) or 1
+    bars = ""
+    for d in breakdown:
+        h   = max(4, round(d["count"] / max_day * 44)) if d["count"] else 2
+        bgc = C["main"] if d["count"] else C["divider"]
+        cnt_h = (f'<p style="margin:0 0 4px;font-size:11px;font-weight:700;color:{C["main"]};font-family:Montserrat,Arial,sans-serif;">{d["count"]}</p>'
+                 if d["count"] else f'<p style="margin:0 0 4px;font-size:11px;color:{C["divider"]};font-family:Montserrat,Arial,sans-serif;">&nbsp;</p>')
+        bars += (f'<td style="text-align:center;vertical-align:bottom;padding:0 4px;">{cnt_h}'
+                 f'<table cellpadding="0" cellspacing="0" align="center"><tr>'
+                 f'<td style="background-color:{bgc};height:{h}px;width:24px;" bgcolor="{bgc}"><p style="margin:0;font-size:0;line-height:0;">&nbsp;</p></td>'
+                 f'</tr></table>'
+                 f'<p style="margin:5px 0 0;font-size:9px;color:{C["lavanta"]};white-space:nowrap;font-family:Montserrat,Arial,sans-serif;">{d["label"]}</p>'
+                 f'</td>')
+
+    summary_html = ""
+    if ai and ai.get("summary"):
+        summary_html = (
+            f'<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="height:1px;background-color:{C["divider"]};font-size:0;" bgcolor="{C["divider"]}">&nbsp;</td></tr></table>'
+            f'<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="padding:20px 28px;background-color:{C["bgBody"]};" bgcolor="{C["bgBody"]}">'
+            f'<p style="margin:0 0 8px;font-size:11px;font-weight:800;color:{C["dark"]};text-transform:uppercase;letter-spacing:.14em;font-family:Montserrat,Arial,sans-serif;">Ozet</p>'
+            f'<p style="margin:0;font-size:13px;color:#4b5563;line-height:1.7;font-family:Montserrat,Arial,sans-serif;">{ai["summary"]}</p>'
+            f'<p style="margin:14px 0 0;font-size:12px;color:{C["main"]};font-style:italic;font-family:Montserrat,Arial,sans-serif;">'
+            f'Tam analiz ekte Word dosyasi olarak gonderilmistir.</p>'
+            f'</td></tr></table>'
+        )
+
+    token_line = ""
+    if ai_usage and ai_usage.get("in_tokens"):
+        u = ai_usage
+        token_line = (f'<p style="margin:5px 0 0;font-size:10px;color:{C["lavanta"]};text-align:center;font-family:Montserrat,Arial,sans-serif;">'
+                      f'{u["model"]} &nbsp;&middot;&nbsp; {u["in_tokens"]:,} input + {u["out_tokens"]:,} output token &nbsp;&middot;&nbsp; ${u["cost"]:.6f}</p>')
+
+    return f'''<!DOCTYPE html><html>
+<head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head><body style="margin:0;padding:0;background-color:#f0f0f0;" bgcolor="#f0f0f0">
+<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#f0f0f0">
+<tr><td align="center" style="padding:32px 16px;">
+<table width="600" cellpadding="0" cellspacing="0"
+  style="max-width:600px;width:100%;background-color:#ffffff;border-radius:16px;overflow:hidden;
+         box-shadow:0 16px 60px rgba(47,21,85,0.35),0 4px 20px rgba(102,45,145,0.25);" bgcolor="#ffffff">
+<tr><td>
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr><td style="background-color:{C["dark"]};padding:28px 28px 24px;text-align:center;" bgcolor="{C["dark"]}">
+  <p style="margin:0 0 8px;font-size:9px;color:{C["lavanta"]};text-transform:uppercase;letter-spacing:.2em;font-weight:700;font-family:Montserrat,Arial,sans-serif;">Poligon &middot; CS Ops &middot; Haftalik Rapor</p>
+  <p style="margin:0;font-size:64px;font-weight:900;color:{C["yellow"]};line-height:1;font-family:Montserrat,Arial,sans-serif;">{metrics["total"]}</p>
+  <p style="margin:3px 0 2px;font-size:10px;color:{C["lavanta"]};text-transform:uppercase;letter-spacing:.22em;font-weight:700;font-family:Montserrat,Arial,sans-serif;">KAYIT</p>
+  <p style="margin:0 0 16px;font-size:13px;color:{C["yellow"]};font-weight:700;font-family:Montserrat,Arial,sans-serif;">{week_label}</p>
+  <table cellpadding="0" cellspacing="0" align="center"><tr>
+    <td style="background-color:rgba(255,255,255,0.1);border-radius:20px;padding:7px 20px;border:1px solid rgba(178,138,191,0.3);">{brand_parts}</td>
+  </tr></table>
+  <p style="margin:10px 0 0;font-family:Montserrat,Arial,sans-serif;">{cat_parts}</p>
+</td></tr></table>
+<table width="100%" cellpadding="0" cellspacing="0"><tr>
+  <td style="height:1px;background-color:{C["divider"]};font-size:0;" bgcolor="{C["divider"]}">&nbsp;</td>
+</tr></table>
+<table width="100%" cellpadding="0" cellspacing="0"><tr>
+<td style="padding:20px 28px 22px;background-color:{C["bgBody"]};" bgcolor="{C["bgBody"]}">
+  <p style="margin:0 0 14px;font-size:10px;font-weight:700;color:{C["lavanta"]};letter-spacing:.14em;text-transform:uppercase;font-family:Montserrat,Arial,sans-serif;">Gunluk Dagilim</p>
+  <table cellpadding="0" cellspacing="0"><tr style="vertical-align:bottom;">{bars}</tr></table>
+</td></tr></table>
+{summary_html}
+<table width="100%" cellpadding="0" cellspacing="0"><tr>
+<td style="padding:14px 28px;background-color:{C["dark"]};" bgcolor="{C["dark"]}">
+  <p style="margin:0;font-size:11px;color:{C["yellow"]};font-weight:700;text-align:center;font-family:Montserrat,Arial,sans-serif;">POLIGON CS Feedback AI Report &nbsp;&middot;&nbsp; Haftalik</p>
+  {token_line}
+  <p style="margin:4px 0 0;font-size:10px;color:{C["lavanta"]};text-align:center;font-family:Montserrat,Arial,sans-serif;">Developed by Erhan</p>
+</td></tr></table>
+</td></tr></table>
+</td></tr></table>
+</body></html>'''
+
+# ── EMAIL (attachment destekli) ───────────────────────────────
+def send_email_v2(html, subject, attachment_path=None, attachment_name=None):
+    from email.mime.base import MIMEBase
+    from email import encoders
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"]    = GMAIL_USER
+    msg["To"]      = REPORT_EMAILS[0]
+    if len(REPORT_EMAILS) > 1:
+        msg["Cc"] = ", ".join(REPORT_EMAILS[1:])
+
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(html, "html", "utf-8"))
+    msg.attach(alt)
+
+    if attachment_path and attachment_name:
+        with open(attachment_path, "rb") as f:
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(f.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f'attachment; filename="{attachment_name}"')
+        msg.attach(part)
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(GMAIL_USER, GMAIL_PASS)
+        server.sendmail(GMAIL_USER, REPORT_EMAILS, msg.as_string())
+    print(f"[EMAIL] Gönderildi: {', '.join(REPORT_EMAILS)}")
+
+# ── RUN WEEKLY (yeni versiyon) ────────────────────────────────
+def run_weekly_v2(start_str=None, end_str=None):
+    import os, pytz
+    if not end_str:
+        sofia = pytz.timezone("Europe/Sofia")
+        now   = datetime.now(sofia)
+        dow   = now.weekday()
+        end   = now - timedelta(days=dow + 1)
+        start = end - timedelta(days=6)
+        end_str   = end.strftime("%Y-%m-%d")
+        start_str = start.strftime("%Y-%m-%d")
+
+    lbl = week_label_tr(start_str, end_str)
+    print(f"\n[WEEKLY] {start_str} - {end_str}")
+
+    rows      = load_rows(start_str, end_str)
+    metrics   = compute_metrics(rows)
+    breakdown = daily_breakdown(rows, start_str, end_str)
+    ai, model_used, ai_usage = analyze_with_ai(rows, "weekly", lbl) if rows else (None, "—", {})
+
+    # Kısa email body
+    html = build_weekly_short_html(metrics, ai, lbl, breakdown, ai_usage)
+
+    # Word attachment
+    word_path = build_word_doc(ai, metrics, lbl, breakdown, ai_usage)
+    word_name = f"CS_Feedback_Haftalik_{start_str}_{end_str}.docx"
+
+    subject = f"CS Feedback Haftalik | {lbl} | {metrics['total']} Kayit"
+    send_email_v2(html, subject, word_path, word_name)
+
+    os.unlink(word_path)
+    print(f"[WEEKLY] Tamamlandi — {metrics['total']} kayit")
