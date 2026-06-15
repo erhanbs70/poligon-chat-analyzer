@@ -230,7 +230,7 @@ def build_prompt(rows, mode, lbl):
     weekly = (mode == "weekly")
     lines = []
     for i, r in enumerate(rows):
-        fb = str(r["feedback"] or "-")[:150]  # 150 karakter — daha fazla bağlam
+        fb = str(r["feedback"] or "-")  # tam metin
         lines.append(f"{i+1}. [{r['brand']}] [{r['category']}] {r['username'] or '?'} | {fb}")
 
     schema = json.dumps({
