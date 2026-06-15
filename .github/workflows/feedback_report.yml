@@ -1,0 +1,52 @@
+name: Feedback AI Report
+
+on:
+  schedule:
+    - cron: '30 6 * * *'      # Günlük 08:30 Sofia (06:30 UTC yaz)
+    - cron: '0 7 * * 1'       # Haftalık Pazartesi 09:00 Sofia (07:00 UTC yaz)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'daily veya weekly'
+        required: false
+        default: 'daily'
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python kurulum
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bağımlılıkları kur
+        run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client
+
+      - name: Modu belirle
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
+          elif [ "$(date +%u)" = "1" ] && [ "$(date +%H)" = "07" ]; then
+            echo "mode=weekly" >> $GITHUB_OUTPUT
+          else
+            echo "mode=daily" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Feedback Raporu çalıştır
+        env:
+          SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
+          GCP_CREDENTIALS:    ${{ secrets.GCP_CREDENTIALS }}
+          GEMINI_KEYS:        ${{ secrets.GEMINI_KEYS }}
+          CLAUDE_KEY:         ${{ secrets.CLAUDE_KEY }}
+          GROQ_KEYS:          ${{ secrets.GROQ_KEYS }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_EMAILS:      ${{ secrets.REPORT_EMAILS }}
+        run: python scripts/feedback_report.py ${{ steps.mode.outputs.mode }}
