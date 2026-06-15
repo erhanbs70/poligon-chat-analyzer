@@ -230,20 +230,20 @@ def build_prompt(rows, mode, lbl):
     weekly = (mode == "weekly")
     lines = []
     for i, r in enumerate(rows):
-        fb = str(r["feedback"] or "-")[:80]
+        fb = str(r["feedback"] or "-")[:150]  # 150 karakter — daha fazla bağlam
         lines.append(f"{i+1}. [{r['brand']}] [{r['category']}] {r['username'] or '?'} | {fb}")
 
     schema = json.dumps({
         "categories": [{
-            "name":           "Spesifik konu — feedback metninden cikart, max 5 kelime",
+            "name":           "Spesifik konu — feedback metninden cikart, max 6 kelime",
             "count":          0,
             "brandBreakdown": [{"brand": "SB", "count": 0}],
             "users":          [{"username": "str", "brand": "SB"}],
-            "shortNote":      "1 cumle gercek sorun"
+            "shortNote":      "Gercek sorunu 1-2 cumle ile acikla — spesifik ol, somut bilgi ver"
         }],
-        "critical":    [{"username": "str", "brand": "str", "reason": "Tutar veya aciliyet — 1 cumle"}],
-        "actionItems": ["Kime ne yapilmali — 1 cumle"],
-        "summary":     "max 2 cumle"
+        "critical":    [{"username": "str", "brand": "str", "reason": "Tutar veya aciliyet — 1 cumle, rakam varsa yaz"}],
+        "actionItems": ["Kime ne yapilmali — departman + aksiyon — 1 cumle"],
+        "summary":     "Genel durumu 2 cumle ile ozetle, onemli kullanici adi varsa yaz"
     }, ensure_ascii=False)
 
     return (
@@ -258,15 +258,21 @@ def build_prompt(rows, mode, lbl):
         "Ornek: \"cekim gelmedi\", \"havale cekimi hesaba gecmedi\", \"onayli cekim yansimadi\" → hepsi = \"Onayli Cekim Hesaba Gecmedi\"\n"
         "Ornek: \"BBL kaldirilmasi talebi\", \"BBL durumu gozden gecirme\" → hepsi = \"BBL Kaldirilmasi Talebi\"\n"
         "Suphe durumunda birlestir, ayirma.\n\n"
+        "SHORT NOTE KURALI: Her kategori icin shortNote ZORUNLU. Genel soz degil — somut sorun yaz.\n"
+        "KOTU: \"Cekim sorunlari mevcut\"\n"
+        "IYI: \"Onayli havale cekimleri 1-3 is gunu icinde hesaplara yansimamis, musteri maduriyet bildiriyor\"\n\n"
+        "KRITIK KURAL: Yuksek tutar (5000 TL+), hesap kapatma tehdidi, acil cozum gerektiren durumlar kritik olarak isaretle.\n\n"
+        "AKSIYON KURALI: Her aksiyon icin hangi departman ne yapmali yaz. Ornek: \"Finans departmani onayli cekim listesini kontrol etmeli.\"\n\n"
         "GOREV:\n"
         "1. Spesifik konu altinda grupla\n"
         "2. brandBreakdown: her brand kac kayit var, SADECE varsa ekle\n"
         "3. users: her uyenin username ve brand bilgisini ekle — hicbirini atla\n"
         "4. categories listesini buyukten kucuge sirala\n"
-        "5. Kritik olanlari isaretle (yuksek tutar, acil, cozumsuz)\n"
-        + ("6. Haftalik seyri ozetle\n" if weekly else "")
+        "5. Kritik olanlari isaretle (yuksek tutar, acil, cozumsuz, tehdit)\n"
+        "6. actionItems: en az 2, en fazla 5 aksiyon yaz\n"
+        + ("7. Haftalik seyri ozetle — artan/azalan konulari belirt\n" if weekly else "")
         + "\nBBL=Bonus Black List | SB=Superbetin | BS=Betsat | TB=Turkbet\n"
-        "OZET KURALI: Onemli durum varsa ilgili kullanici adini yaz.\n"
+        "OZET KURALI: Onemli durum varsa ilgili kullanici adini yaz. Genel ifadelerden kac.\n"
         f"Sadece JSON dondur:\n{schema}"
     )
 
@@ -442,13 +448,22 @@ def topic_rows(categories):
 
         user_html = ""
         if cat.get("users"):
+            users = cat["users"]
+            show  = users[:5]
+            extra = len(users) - 5 if len(users) > 5 else 0
             pills = ""
-            for u in cat["users"]:
+            for u in show:
                 bg, fg = brand_bg_text(u.get("brand", "SB"))
                 pills += (
                     f'<span style="display:inline-block;padding:2px 8px;background:{bg};color:{fg};'
                     f'border-radius:4px;font-size:10px;font-weight:700;margin:2px 3px 2px 0;'
                     f'font-family:Montserrat,Arial,sans-serif;">{u["username"]}</span>'
+                )
+            if extra > 0:
+                pills += (
+                    f'<span style="display:inline-block;padding:2px 8px;background:#f0e8ff;color:{C["subtle"]};'
+                    f'border-radius:4px;font-size:10px;font-weight:600;margin:2px 3px 2px 0;'
+                    f'font-family:Montserrat,Arial,sans-serif;">ve {extra} kişi daha</span>'
                 )
             user_html = (
                 f'<table cellpadding="0" cellspacing="0" style="margin-top:5px;"><tr>'
