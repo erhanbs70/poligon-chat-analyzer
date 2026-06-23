@@ -1,0 +1,37 @@
+name: CommQA — Rating & Tag Sheets
+
+on:
+  schedule:
+    # Her gün 05:00 Sofia = 03:00 UTC yaz / 02:00 UTC kış
+    # (GAS'taki 05:00 Rating + 06:00 Tag tek job'da birleşti)
+    - cron: '0 3 * * *'
+  workflow_dispatch:          # Manuel çalıştırma butonu
+
+jobs:
+  commqa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30       # GAS'ta 6dk timeout vardı, burada 30dk sınır
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python kurulum
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bağımlılıkları kur
+        run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client
+
+      - name: CommQA çalıştır
+        env:
+          COMM100_SITE_ID:      ${{ secrets.COMM100_SITE_ID }}
+          COMM100_API_KEY:      ${{ secrets.COMM100_API_KEY }}
+          COMM100_EMAIL:        ${{ secrets.COMM100_EMAIL }}
+          COMMQA_SPREADSHEET_ID: ${{ secrets.COMMQA_SPREADSHEET_ID }}
+          GCP_CREDENTIALS:      ${{ secrets.GCP_CREDENTIALS }}
+          GMAIL_USER:           ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:   ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_EMAILS:        ${{ secrets.REPORT_EMAILS }}
+        run: python scripts/commqa.py
