@@ -1,0 +1,47 @@
+name: Rating Dashboard
+
+on:
+  schedule:
+    # Her gün 09:00 Sofia = 07:00 UTC yaz / 06:00 UTC kış
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'daily veya weekly (weekly = haftalık raporu zorla çalıştır)'
+        required: false
+        default: 'daily'
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python kurulum
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bağımlılıkları kur
+        run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client
+
+      - name: Modu belirle
+        id: mode
+        run: |
+          INPUT="${{ github.event.inputs.mode }}"
+          echo "mode=${INPUT:-daily}" >> $GITHUB_OUTPUT
+
+      - name: Rating Dashboard çalıştır
+        env:
+          COMM100_SITE_ID:       ${{ secrets.COMM100_SITE_ID }}
+          COMM100_API_KEY:       ${{ secrets.COMM100_API_KEY }}
+          COMM100_EMAIL:         ${{ secrets.COMM100_EMAIL }}
+          RATING_SPREADSHEET_ID: ${{ secrets.RATING_SPREADSHEET_ID }}
+          GCP_CREDENTIALS:       ${{ secrets.GCP_CREDENTIALS }}
+          GMAIL_USER:            ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_EMAILS:         ${{ secrets.REPORT_EMAILS }}
+        run: python scripts/rating_dashboard.py ${{ steps.mode.outputs.mode }}
