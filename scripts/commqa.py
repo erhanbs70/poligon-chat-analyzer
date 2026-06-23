@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # ============================================================
-# POLIGON COMMQA — v1 (GitHub Actions)
+# POLIGON COMMQA — v2 (GitHub Actions)
 # Rating 1-2-3 + Comment sheet  &  QA Tag Listesi sheet
 # Google Sheets API ile direkt yazar — GAS timeout yok
+# v2: mergeCells kaldırıldı (clear sonrası merge hatası fix)
+#     batch format optimize — satır başına tek request yerine
+#     renk gruplarına göre toplu request
 # ============================================================
 
 import os
@@ -46,7 +49,6 @@ QA_TAGS = [
 ]
 VIP_TAGS = ["VIP TIER3", "VIP"]
 
-# Sheet adları — mevcut GAS çıktısıyla aynı
 RATING_SHEET = "Rating & Comment"
 TAG_SHEET    = "🏷️ Tag Listesi"
 LOG_SHEET    = "__log__"
@@ -75,20 +77,17 @@ def sofia_to_utc_range(date_str):
     )
 
 def in_sofia_range(ts_str, date_str):
-    """Timestamp'i Sofia'ya çevir, date_str ile karşılaştır."""
     if not ts_str:
         return True
     import pytz
     tz = pytz.timezone("Europe/Sofia")
     try:
         dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-        sofia_date = dt.astimezone(tz).strftime("%Y-%m-%d")
-        return sofia_date == date_str
+        return dt.astimezone(tz).strftime("%Y-%m-%d") == date_str
     except Exception:
         return True
 
 def format_sofia(ts_str):
-    """API timestamp → Sofia dd/MM/yyyy HH:mm:ss"""
     if not ts_str:
         return ""
     import pytz
@@ -99,7 +98,7 @@ def format_sofia(ts_str):
     except Exception:
         return ts_str
 
-# ── GOOGLE SHEETS SERVICE ────────────────────────────────────
+# ── GOOGLE SHEETS ────────────────────────────────────────────
 def sheets_service():
     creds = service_account.Credentials.from_service_account_info(
         json.loads(GCP_CREDS_JSON),
@@ -115,7 +114,6 @@ def get_sheet_id(svc, sheet_name):
     return None
 
 def ensure_sheet(svc, sheet_name):
-    """Sheet yoksa oluştur, varsa ID döner."""
     sid = get_sheet_id(svc, sheet_name)
     if sid is not None:
         return sid
@@ -125,22 +123,41 @@ def ensure_sheet(svc, sheet_name):
     ).execute()
     return resp["replies"][0]["addSheet"]["properties"]["sheetId"]
 
-def clear_sheet(svc, sheet_name):
+def clear_sheet(svc, sheet_id, sheet_name):
+    """İçeriği temizle + tüm merge'leri kaldır."""
     svc.spreadsheets().values().clear(
         spreadsheetId=SPREADSHEET_ID,
         range=f"'{sheet_name}'",
         body={}
     ).execute()
+    # Mevcut merge'leri kaldır — yoksa yeni merge hata verir
+    try:
+        svc.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"requests": [{
+                "unmergeCells": {
+                    "range": {
+                        "sheetId":          sheet_id,
+                        "startRowIndex":    0,
+                        "endRowIndex":      1,
+                        "startColumnIndex": 0,
+                        "endColumnIndex":   10,
+                    }
+                }
+            }]}
+        ).execute()
+    except Exception:
+        pass  # Merge yoksa hata fırlatır, ignore
 
-def write_values(svc, sheet_name, values, start="A1"):
+def write_values(svc, sheet_name, values, start="A1", user_entered=False):
     svc.spreadsheets().values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"'{sheet_name}'!{start}",
-        valueInputOption="RAW",
+        valueInputOption="USER_ENTERED" if user_entered else "RAW",
         body={"values": values},
     ).execute()
 
-def batch_format(svc, sheet_id, requests_list):
+def batch_format(svc, requests_list):
     if not requests_list:
         return
     svc.spreadsheets().batchUpdate(
@@ -148,11 +165,14 @@ def batch_format(svc, sheet_id, requests_list):
         body={"requests": requests_list}
     ).execute()
 
-# ── HELPERS: renk nesnesi ────────────────────────────────────
+# ── RENK ─────────────────────────────────────────────────────
 def rgb(hex_str):
     h = hex_str.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    return {"red": r / 255, "green": g / 255, "blue": b / 255}
+    return {
+        "red":   int(h[0:2], 16) / 255,
+        "green": int(h[2:4], 16) / 255,
+        "blue":  int(h[4:6], 16) / 255,
+    }
 
 RATING_COLORS = {
     1: {"bg": "#f28b82", "fg": "#7c0000"},
@@ -162,17 +182,8 @@ RATING_COLORS = {
     5: {"bg": "#a8f0c6", "fg": "#0d4020"},
 }
 
-def cell_fmt(bg_hex, fg_hex=None, bold=False):
-    fmt = {
-        "backgroundColor": rgb(bg_hex),
-        "textFormat": {"bold": bold},
-    }
-    if fg_hex:
-        fmt["textFormat"]["foregroundColor"] = rgb(fg_hex)
-    return fmt
-
-def range_req(sheet_id, r1, c1, r2, c2):
-    """0-indexed inclusive range for Sheets API."""
+def rng(sheet_id, r1, c1, r2, c2):
+    """0-indexed inclusive GridRange."""
     return {
         "sheetId":          sheet_id,
         "startRowIndex":    r1,
@@ -181,15 +192,51 @@ def range_req(sheet_id, r1, c1, r2, c2):
         "endColumnIndex":   c2 + 1,
     }
 
+def repeat_cell(sheet_id, r1, c1, r2, c2, bg=None, fg=None,
+                bold=False, font_size=None, h_align=None, wrap=False):
+    fmt = {}
+    if bg:
+        fmt["backgroundColor"] = rgb(bg)
+    tf = {}
+    if bold:
+        tf["bold"] = True
+    if fg:
+        tf["foregroundColor"] = rgb(fg)
+    if font_size:
+        tf["fontSize"] = font_size
+    if tf:
+        fmt["textFormat"] = tf
+    if h_align:
+        fmt["horizontalAlignment"] = h_align
+    if wrap:
+        fmt["wrapStrategy"] = "WRAP"
+
+    fields = []
+    if bg:
+        fields.append("userEnteredFormat.backgroundColor")
+    if tf:
+        fields.append("userEnteredFormat.textFormat")
+    if h_align:
+        fields.append("userEnteredFormat.horizontalAlignment")
+    if wrap:
+        fields.append("userEnteredFormat.wrapStrategy")
+
+    return {
+        "repeatCell": {
+            "range": rng(sheet_id, r1, c1, r2, c2),
+            "cell":  {"userEnteredFormat": fmt},
+            "fields": ",".join(fields),
+        }
+    }
+
 # ── COMM100 FETCH ────────────────────────────────────────────
 def fetch_all_chats(date_str):
-    """Tüm chatleri çek (sayfalı). Timeout yok — GH Actions'da sınır 60dk."""
     start_time, end_time = sofia_to_utc_range(date_str)
-    auth    = comm100_auth()
-    result  = []
-    seen    = set()
-    page    = 1
-    base    = (
+    auth   = comm100_auth()
+    result = []
+    seen   = set()
+    page   = 1
+    base   = (
         f"https://dash15.lively-chat.com/api/LiveChat/chats:search"
         f"?siteId={SITE_ID}"
         f"&include=chatWrapupCategory&include=postChatSurvey&include=chatAgent"
@@ -239,14 +286,15 @@ def api_agent(c):
     return c.get("agentName") or c.get("agent_name") or ""
 
 def api_visitor(c):
-    return c.get("preChatName") or c.get("name") or c.get("visitorName") or c.get("visitor_name") or ""
+    return (c.get("preChatName") or c.get("name") or
+            c.get("visitorName") or c.get("visitor_name") or "")
 
 def api_site(c):
+    import re
     try:
         url = (c.get("requestingPageURL")
                or (c.get("visitor") or {}).get("currentBrowsing")
                or c.get("requestPage") or "")
-        import re
         m = re.match(r"https?://([^/]+)", url)
         return m.group(1) if m else url
     except Exception:
@@ -258,12 +306,11 @@ def api_duration(c):
         ts2 = c.get("endTime")   or c.get("end_time")   or ""
         if not ts1 or not ts2:
             return ""
-        dt1 = datetime.fromisoformat(ts1.replace("Z", "+00:00"))
-        dt2 = datetime.fromisoformat(ts2.replace("Z", "+00:00"))
+        dt1  = datetime.fromisoformat(ts1.replace("Z", "+00:00"))
+        dt2  = datetime.fromisoformat(ts2.replace("Z", "+00:00"))
         secs = int((dt2 - dt1).total_seconds())
-        h  = secs // 3600
-        mn = (secs % 3600) // 60
-        s  = secs % 60
+        h, rem = divmod(secs, 3600)
+        mn, s  = divmod(rem, 60)
         return (f"{h}s " if h else "") + f"{mn}dk {s}sn"
     except Exception:
         return ""
@@ -276,9 +323,9 @@ def api_cat(c):
     )
 
 def extract_main_tag(category):
+    import re
     if not category:
         return ""
-    import re
     inner = [m.group(1).strip() for m in re.finditer(r"\(([^)]+)\)", category)
              if not re.search(r"VIP", m.group(1), re.I)]
     for t in inner:
@@ -286,10 +333,7 @@ def extract_main_tag(category):
             return t
     if inner:
         return inner[0]
-
-    SKIP = re.compile(
-        r"^(Wild card|Promotions|Deposit|Casino|Sport|General|WD|VIP TIER\d*|VIP)$", re.I
-    )
+    SKIP  = re.compile(r"^(Wild card|Promotions|Deposit|Casino|Sport|General|WD|VIP TIER\d*|VIP)$", re.I)
     parts = [p.strip() for p in re.sub(r"\([^)]*\)", "", category).split(",") if p.strip()]
     for p in parts:
         if "_" in p and not SKIP.match(p):
@@ -302,9 +346,9 @@ def extract_main_tag(category):
     return parts[0] if parts else ""
 
 def extract_vip_tag(category):
+    import re
     if not category:
         return ""
-    import re
     m = re.search(r"VIP TIER(\d+)", category, re.I)
     if m:
         return "VIP TIER" + m.group(1)
@@ -319,10 +363,9 @@ def all_tag_parts(cat):
     outer = [p.strip().lower() for p in re.sub(r"\([^)]*\)", "", cat).split(",") if p.strip()]
     return inner + outer
 
-# ── FİLTRE: Rating ───────────────────────────────────────────
+# ── FİLTRE ───────────────────────────────────────────────────
 def filter_rating_chats(chats, date_str):
-    seen   = set()
-    result = []
+    seen, result = set(), []
     for c in chats:
         cid = str(c.get("id") or c.get("chatId") or "")
         if not cid or cid in seen:
@@ -332,20 +375,18 @@ def filter_rating_chats(chats, date_str):
             continue
         if not api_agent(c).strip():
             continue
-        s = c.get("postChatSurvey") or {}
-        g = s.get("ratingGrade")
-        g = int(g) if g is not None else None
+        s   = c.get("postChatSurvey") or {}
+        g   = s.get("ratingGrade")
+        g   = int(g) if g is not None else None
         cmt = (s.get("ratingComment") or "").strip()
         if (g is not None and 1 <= g <= 3) or cmt:
             result.append(c)
     print(f"[FILTER] Rating: {len(result)} chat")
     return result
 
-# ── FİLTRE: Tag ──────────────────────────────────────────────
 def filter_tag_chats(chats, date_str, exclude_ids=None):
-    excl   = set(exclude_ids or [])
-    seen   = set()
-    result = []
+    excl = set(exclude_ids or [])
+    seen, result = set(), []
     for c in chats:
         cid = str(c.get("id") or c.get("chatId") or "")
         if not cid or cid in seen or cid in excl:
@@ -363,90 +404,33 @@ def filter_tag_chats(chats, date_str, exclude_ids=None):
     print(f"[FILTER] Tag: {len(result)} chat (excl: {len(excl)})")
     return result
 
-# ── SHEETS YAZ: Rating & Comment ─────────────────────────────
-def write_rating_sheet(svc, chats, date_str):
-    print(f"[SHEET] Rating & Comment yazılıyor ({len(chats)} chat)...")
-    sheet_id = ensure_sheet(svc, RATING_SHEET)
-    clear_sheet(svc, RATING_SHEET)
+# ── SHEET YAZ: ortak header format ───────────────────────────
+def _header_fmt_reqs(sheet_id, n_cols, title_bg, title_fg, header_bg, header_fg,
+                     col_widths, frozen_rows=2):
+    reqs = []
 
-    # Başlık + header
-    header_row  = [["⭐ Rating 1-2-3 & Commentli Chatler   |   " + date_str + " → " + date_str]]
-    col_headers = [["Temsilci İsmi", "Visitor İsmi", "Sohbet Tarihi", "Kullanılan TAG",
-                    "VIP Tag", "Site Adı", "Chat Süresi", "Rating Score",
-                    "User Comment", "Chat Linki"]]
+    # Başlık satırı — merge YOK, sadece renk + center
+    # (merge önceki çalışmadan kalmış olabilir, unmerge clear_sheet'te yapılıyor)
+    reqs.append(repeat_cell(sheet_id, 0, 0, 0, n_cols - 1,
+                             bg=title_bg, fg=title_fg, bold=True,
+                             font_size=11, h_align="CENTER"))
 
-    rows = []
-    for c in chats:
-        agent   = api_agent(c)
-        visitor = api_visitor(c)
-        ts      = c.get("startTime") or c.get("start_time") or ""
-        cat     = api_cat(c)
-        tag     = extract_main_tag(cat)
-        vip     = extract_vip_tag(cat)
-        site    = api_site(c)
-        dur     = api_duration(c)
-        s       = c.get("postChatSurvey") or {}
-        g       = s.get("ratingGrade")
-        rating  = int(g) if g is not None else ""
-        comment = (s.get("ratingComment") or "").strip()
-        cid     = str(c.get("id") or c.get("chatId") or "")
-        link    = f"{PORTAL_BASE}?chatId={cid}" if cid else ""
-        rows.append([agent, visitor, format_sofia(ts), tag, vip, site, dur,
-                     rating, comment, link])
+    # Kolon başlıkları
+    reqs.append(repeat_cell(sheet_id, 1, 0, 1, n_cols - 1,
+                             bg=header_bg, fg=header_fg, bold=True, font_size=10))
 
-    all_values = header_row + col_headers + rows
-    write_values(svc, RATING_SHEET, all_values)
-
-    # ── Formatting ──
-    fmt_reqs = []
-
-    # Başlık satırı (row 0) birleştir + renk
-    fmt_reqs.append({
-        "mergeCells": {
-            "range": range_req(sheet_id, 0, 0, 0, 9),
-            "mergeType": "MERGE_ALL"
-        }
-    })
-    fmt_reqs.append({
-        "repeatCell": {
-            "range": range_req(sheet_id, 0, 0, 0, 9),
-            "cell": {"userEnteredFormat": {
-                **cell_fmt("#1a1a2e", "#f0c040", bold=True),
-                "horizontalAlignment": "CENTER",
-                "textFormat": {"bold": True, "fontSize": 11,
-                               "foregroundColor": rgb("#f0c040")},
-                "backgroundColor": rgb("#1a1a2e"),
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
-        }
-    })
-
-    # Header row (row 1)
-    fmt_reqs.append({
-        "repeatCell": {
-            "range": range_req(sheet_id, 1, 0, 1, 9),
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": rgb("#1a73e8"),
-                "textFormat": {"bold": True, "fontSize": 10,
-                               "foregroundColor": rgb("#ffffff")},
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat)"
-        }
-    })
-
-    # Freeze 2 satır
-    fmt_reqs.append({
+    # Freeze
+    reqs.append({
         "updateSheetProperties": {
             "properties": {"sheetId": sheet_id,
-                           "gridProperties": {"frozenRowCount": 2}},
+                           "gridProperties": {"frozenRowCount": frozen_rows}},
             "fields": "gridProperties.frozenRowCount"
         }
     })
 
-    # Sütun genişlikleri (piksel)
-    col_widths = [155, 130, 160, 180, 110, 160, 90, 80, 280, 200]
+    # Sütun genişlikleri
     for i, w in enumerate(col_widths):
-        fmt_reqs.append({
+        reqs.append({
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
                           "startIndex": i, "endIndex": i + 1},
@@ -455,224 +439,155 @@ def write_rating_sheet(svc, chats, date_str):
             }
         })
 
-    # Veri satırları — satır bazlı renklendirme
+    return reqs
+
+def _row_fmt_reqs(sheet_id, chats, data_start_row, include_tag_missing=False):
+    """
+    Tüm veri satırları için renk request'lerini üret.
+    Satır başına ayrı request yerine renk gruplarına göre toplu.
+    """
+    reqs = []
+
+    # Önce tümüne zebra arka plan (tek tek yerine grup bazlı)
+    even_rows, odd_rows, vip_rows = [], [], []
     for idx, c in enumerate(chats):
-        row_i   = idx + 2  # 0-indexed, başlık+header geçtik
-        cat     = api_cat(c)
-        vip     = extract_vip_tag(cat)
-        s       = c.get("postChatSurvey") or {}
-        g       = s.get("ratingGrade")
-        rating  = int(g) if g is not None else None
-
-        default_bg = "#fff8e1" if vip else ("#f8f9fa" if idx % 2 == 0 else "#ffffff")
-
-        # Tüm satır arka planı
-        fmt_reqs.append({
-            "repeatCell": {
-                "range": range_req(sheet_id, row_i, 0, row_i, 9),
-                "cell": {"userEnteredFormat": {"backgroundColor": rgb(default_bg)}},
-                "fields": "userEnteredFormat.backgroundColor"
-            }
-        })
-
-        # VIP sütunu (col 4) sarı + bold
+        row_i = data_start_row + idx
+        vip   = extract_vip_tag(api_cat(c))
         if vip:
-            fmt_reqs.append({
-                "repeatCell": {
-                    "range": range_req(sheet_id, row_i, 4, row_i, 4),
-                    "cell": {"userEnteredFormat": {
-                        "backgroundColor": rgb("#ffd666"),
-                        "textFormat": {"bold": True}
-                    }},
-                    "fields": "userEnteredFormat(backgroundColor,textFormat)"
-                }
-            })
+            vip_rows.append(row_i)
+        elif idx % 2 == 0:
+            even_rows.append(row_i)
+        else:
+            odd_rows.append(row_i)
 
-        # Rating sütunu (col 7) renk
+    # Toplu zebra — ardışık aralıkları birleştir
+    for rows, bg in [(even_rows, "#f8f9fa"), (odd_rows, "#ffffff"), (vip_rows, "#fff8e1")]:
+        for row_i in rows:
+            reqs.append(repeat_cell(sheet_id, row_i, 0, row_i, 9, bg=bg))
+
+    # Hücre bazlı özel renkler (VIP, rating, tag eksik)
+    for idx, c in enumerate(chats):
+        row_i  = data_start_row + idx
+        cat    = api_cat(c)
+        vip    = extract_vip_tag(cat)
+        tag    = extract_main_tag(cat)
+        s      = c.get("postChatSurvey") or {}
+        g      = s.get("ratingGrade")
+        rating = int(g) if g is not None else None
+
+        if vip:
+            reqs.append(repeat_cell(sheet_id, row_i, 4, row_i, 4,
+                                    bg="#ffd666", bold=True))
+
+        if include_tag_missing and tag == "⚠️ TAG EKSİK":
+            reqs.append(repeat_cell(sheet_id, row_i, 3, row_i, 3,
+                                    bg="#f28b82", fg="#7c0000", bold=True))
+
         if rating and rating in RATING_COLORS:
             rc = RATING_COLORS[rating]
-            fmt_reqs.append({
-                "repeatCell": {
-                    "range": range_req(sheet_id, row_i, 7, row_i, 7),
-                    "cell": {"userEnteredFormat": {
-                        "backgroundColor": rgb(rc["bg"]),
-                        "textFormat": {"bold": True,
-                                       "foregroundColor": rgb(rc["fg"])},
-                    }},
-                    "fields": "userEnteredFormat(backgroundColor,textFormat)"
-                }
-            })
+            reqs.append(repeat_cell(sheet_id, row_i, 7, row_i, 7,
+                                    bg=rc["bg"], fg=rc["fg"], bold=True))
 
-    batch_format(svc, sheet_id, fmt_reqs)
+    return reqs
+
+# ── SHEETS YAZ: Rating & Comment ─────────────────────────────
+def write_rating_sheet(svc, chats, date_str):
+    print(f"[SHEET] Rating & Comment yazılıyor ({len(chats)} chat)...")
+    sheet_id = ensure_sheet(svc, RATING_SHEET)
+    clear_sheet(svc, sheet_id, RATING_SHEET)
+
+    header_row  = [["⭐ Rating 1-2-3 & Commentli Chatler   |   " + date_str + " → " + date_str]]
+    col_headers = [["Temsilci İsmi", "Visitor İsmi", "Sohbet Tarihi", "Kullanılan TAG",
+                    "VIP Tag", "Site Adı", "Chat Süresi", "Rating Score",
+                    "User Comment", "Chat Linki"]]
+    rows = []
+    for c in chats:
+        s       = c.get("postChatSurvey") or {}
+        g       = s.get("ratingGrade")
+        cid     = str(c.get("id") or c.get("chatId") or "")
+        link    = f'=HYPERLINK("{PORTAL_BASE}?chatId={cid}","Chati Aç")' if cid else ""
+        rows.append([
+            api_agent(c),
+            api_visitor(c),
+            format_sofia(c.get("startTime") or c.get("start_time") or ""),
+            extract_main_tag(api_cat(c)),
+            extract_vip_tag(api_cat(c)),
+            api_site(c),
+            api_duration(c),
+            int(g) if g is not None else "",
+            (s.get("ratingComment") or "").strip(),
+            link,
+        ])
+
+    write_values(svc, RATING_SHEET, header_row + col_headers + rows, user_entered=True)
+
+    fmt_reqs = _header_fmt_reqs(
+        sheet_id, n_cols=10,
+        title_bg="#1a1a2e", title_fg="#f0c040",
+        header_bg="#1a73e8", header_fg="#ffffff",
+        col_widths=[155, 130, 160, 180, 110, 160, 90, 80, 280, 200],
+    )
+    fmt_reqs += _row_fmt_reqs(sheet_id, chats, data_start_row=2,
+                               include_tag_missing=False)
+    batch_format(svc, fmt_reqs)
     print(f"[SHEET] Rating & Comment ✅ ({len(chats)} satır)")
 
 # ── SHEETS YAZ: Tag Listesi ───────────────────────────────────
 def write_tag_sheet(svc, chats, date_str):
     print(f"[SHEET] Tag Listesi yazılıyor ({len(chats)} chat)...")
     sheet_id = ensure_sheet(svc, TAG_SHEET)
-    clear_sheet(svc, TAG_SHEET)
+    clear_sheet(svc, sheet_id, TAG_SHEET)
 
     header_row  = [[f"🏷️ QA Tag Listesi   |   {date_str} → {date_str}   |   {len(chats)} chat"]]
     col_headers = [["Temsilci İsmi", "Visitor İsmi", "Sohbet Tarihi", "Kullanılan Tag",
                     "VIP Tag", "Site Adı", "Chat Süresi", "Rating Score",
                     "User Comment", "Chat Linki"]]
-
     rows = []
     for c in chats:
-        agent   = api_agent(c)
-        visitor = api_visitor(c)
-        ts      = c.get("startTime") or c.get("start_time") or ""
-        cat     = api_cat(c)
-        tag     = extract_main_tag(cat)
-        vip     = extract_vip_tag(cat)
-        site    = api_site(c)
-        dur     = api_duration(c)
-        s       = c.get("postChatSurvey") or {}
-        g       = s.get("ratingGrade")
-        rating  = int(g) if g is not None else ""
-        comment = (s.get("ratingComment") or "").strip()
-        cid     = str(c.get("id") or c.get("chatId") or "")
-        link    = f"{PORTAL_BASE}?chatId={cid}" if cid else ""
-        rows.append([agent, visitor, format_sofia(ts), tag, vip, site, dur,
-                     rating, comment, link])
+        s   = c.get("postChatSurvey") or {}
+        g   = s.get("ratingGrade")
+        cid = str(c.get("id") or c.get("chatId") or "")
+        link = f'=HYPERLINK("{PORTAL_BASE}?chatId={cid}","Chati Aç")' if cid else ""
+        rows.append([
+            api_agent(c),
+            api_visitor(c),
+            format_sofia(c.get("startTime") or c.get("start_time") or ""),
+            extract_main_tag(api_cat(c)),
+            extract_vip_tag(api_cat(c)),
+            api_site(c),
+            api_duration(c),
+            int(g) if g is not None else "",
+            (s.get("ratingComment") or "").strip(),
+            link,
+        ])
 
-    all_values = header_row + col_headers + rows
-    write_values(svc, TAG_SHEET, all_values)
+    write_values(svc, TAG_SHEET, header_row + col_headers + rows, user_entered=True)
 
-    # ── Formatting ──
-    fmt_reqs = []
-
-    fmt_reqs.append({
-        "mergeCells": {
-            "range": range_req(sheet_id, 0, 0, 0, 9),
-            "mergeType": "MERGE_ALL"
-        }
-    })
-    fmt_reqs.append({
-        "repeatCell": {
-            "range": range_req(sheet_id, 0, 0, 0, 9),
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": rgb("#1a1a2e"),
-                "horizontalAlignment": "CENTER",
-                "textFormat": {"bold": True, "fontSize": 11,
-                               "foregroundColor": rgb("#f0c040")},
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
-        }
-    })
-    fmt_reqs.append({
-        "repeatCell": {
-            "range": range_req(sheet_id, 1, 0, 1, 9),
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": rgb("#1a73e8"),
-                "textFormat": {"bold": True, "fontSize": 10,
-                               "foregroundColor": rgb("#ffffff")},
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat)"
-        }
-    })
-    fmt_reqs.append({
-        "updateSheetProperties": {
-            "properties": {"sheetId": sheet_id,
-                           "gridProperties": {"frozenRowCount": 2}},
-            "fields": "gridProperties.frozenRowCount"
-        }
-    })
-
-    col_widths = [160, 140, 160, 180, 110, 160, 100, 80, 250, 200]
-    for i, w in enumerate(col_widths):
-        fmt_reqs.append({
-            "updateDimensionProperties": {
-                "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
-                          "startIndex": i, "endIndex": i + 1},
-                "properties": {"pixelSize": w},
-                "fields": "pixelSize"
-            }
-        })
-
-    for idx, c in enumerate(chats):
-        row_i  = idx + 2
-        cat    = api_cat(c)
-        tag    = extract_main_tag(cat)
-        vip    = extract_vip_tag(cat)
-        s      = c.get("postChatSurvey") or {}
-        g      = s.get("ratingGrade")
-        rating = int(g) if g is not None else None
-
-        default_bg = "#fff8e1" if vip else ("#f8f9fa" if idx % 2 == 0 else "#ffffff")
-        fmt_reqs.append({
-            "repeatCell": {
-                "range": range_req(sheet_id, row_i, 0, row_i, 9),
-                "cell": {"userEnteredFormat": {"backgroundColor": rgb(default_bg)}},
-                "fields": "userEnteredFormat.backgroundColor"
-            }
-        })
-
-        if vip:
-            fmt_reqs.append({
-                "repeatCell": {
-                    "range": range_req(sheet_id, row_i, 4, row_i, 4),
-                    "cell": {"userEnteredFormat": {
-                        "backgroundColor": rgb("#ffd666"),
-                        "textFormat": {"bold": True}
-                    }},
-                    "fields": "userEnteredFormat(backgroundColor,textFormat)"
-                }
-            })
-
-        if tag == "⚠️ TAG EKSİK":
-            fmt_reqs.append({
-                "repeatCell": {
-                    "range": range_req(sheet_id, row_i, 3, row_i, 3),
-                    "cell": {"userEnteredFormat": {
-                        "backgroundColor": rgb("#f28b82"),
-                        "textFormat": {"bold": True,
-                                       "foregroundColor": rgb("#7c0000")},
-                    }},
-                    "fields": "userEnteredFormat(backgroundColor,textFormat)"
-                }
-            })
-
-        if rating and rating in RATING_COLORS:
-            rc = RATING_COLORS[rating]
-            fmt_reqs.append({
-                "repeatCell": {
-                    "range": range_req(sheet_id, row_i, 7, row_i, 7),
-                    "cell": {"userEnteredFormat": {
-                        "backgroundColor": rgb(rc["bg"]),
-                        "textFormat": {"bold": True,
-                                       "foregroundColor": rgb(rc["fg"])},
-                    }},
-                    "fields": "userEnteredFormat(backgroundColor,textFormat)"
-                }
-            })
-
-    batch_format(svc, sheet_id, fmt_reqs)
+    fmt_reqs = _header_fmt_reqs(
+        sheet_id, n_cols=10,
+        title_bg="#1a1a2e", title_fg="#f0c040",
+        header_bg="#1a73e8", header_fg="#ffffff",
+        col_widths=[160, 140, 160, 180, 110, 160, 100, 80, 250, 200],
+    )
+    fmt_reqs += _row_fmt_reqs(sheet_id, chats, data_start_row=2,
+                               include_tag_missing=True)
+    batch_format(svc, fmt_reqs)
     print(f"[SHEET] Tag Listesi ✅ ({len(chats)} satır)")
 
 # ── SHEETS YAZ: Log ───────────────────────────────────────────
 def write_log(svc, log_type, date_str, duration_s, detail):
     sheet_id = ensure_sheet(svc, LOG_SHEET)
-    # Header yoksa ekle
+
     existing = svc.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
         range=f"'{LOG_SHEET}'!A1"
     ).execute().get("values", [])
+
     if not existing:
         write_values(svc, LOG_SHEET,
                      [["Zaman", "Tür", "Tarih", "Süre (sn)", "Detay"]])
-        fmt_reqs = [{
-            "repeatCell": {
-                "range": range_req(sheet_id, 0, 0, 0, 4),
-                "cell": {"userEnteredFormat": {
-                    "backgroundColor": rgb("#1a1a2e"),
-                    "textFormat": {"bold": True,
-                                   "foregroundColor": rgb("#f0c040")},
-                }},
-                "fields": "userEnteredFormat(backgroundColor,textFormat)"
-            }
-        }]
-        batch_format(svc, sheet_id, fmt_reqs)
+        batch_format(svc, [repeat_cell(sheet_id, 0, 0, 0, 4,
+                                       bg="#1a1a2e", fg="#f0c040", bold=True)])
 
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     svc.spreadsheets().values().append(
@@ -680,36 +595,23 @@ def write_log(svc, log_type, date_str, duration_s, detail):
         range=f"'{LOG_SHEET}'!A1",
         valueInputOption="RAW",
         insertDataOption="INSERT_ROWS",
-        body={"values": [[now_str, log_type, date_str, duration_s, str(detail)]]}
+        body={"values": [[now_str, log_type, date_str, str(duration_s), str(detail)]]}
     ).execute()
 
-    # Renk — son satırı bul
-    data = svc.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"'{LOG_SHEET}'!A:A"
+    data     = svc.spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID, range=f"'{LOG_SHEET}'!A:A"
     ).execute().get("values", [])
-    last_row = len(data) - 1  # 0-indexed
+    last_row = len(data) - 1
 
     is_error = "ERROR" in log_type
     is_warn  = "WARN"  in log_type
     bg = "#f28b82" if is_error else "#fff3cd" if is_warn else (
-        "#f8f9fa" if last_row % 2 == 0 else "#ffffff"
-    )
+         "#f8f9fa" if last_row % 2 == 0 else "#ffffff")
     fg = "#7c0000" if is_error else "#856404" if is_warn else "#000000"
 
-    fmt_reqs = [{
-        "repeatCell": {
-            "range": range_req(sheet_id, last_row, 0, last_row, 4),
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": rgb(bg),
-                "textFormat": {"bold": is_error or is_warn,
-                               "foregroundColor": rgb(fg)},
-                "wrapStrategy": "WRAP",
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,wrapStrategy)"
-        }
-    }]
-    batch_format(svc, sheet_id, fmt_reqs)
+    batch_format(svc, [repeat_cell(sheet_id, last_row, 0, last_row, 4,
+                                   bg=bg, fg=fg,
+                                   bold=(is_error or is_warn), wrap=True)])
 
 # ── HATA MAİLİ ───────────────────────────────────────────────
 def send_error_email(date_str, error_msg, tb_str):
@@ -748,23 +650,19 @@ def main():
     try:
         svc = sheets_service()
 
-        # 1. Tüm chatleri çek
         all_chats = fetch_all_chats(date_str)
         if not all_chats:
             print("[MAIN] Chat bulunamadı, çıkılıyor.")
             write_log(svc, "INFO", date_str, "0", "Hiç chat bulunamadı")
             return
 
-        # 2. Rating & Comment
         rating_chats = filter_rating_chats(all_chats, date_str)
         rating_ids   = {str(c.get("id") or c.get("chatId") or "") for c in rating_chats}
         write_rating_sheet(svc, rating_chats, date_str)
 
-        # 3. Tag Listesi (Rating chatlerini hariç tut)
         tag_chats = filter_tag_chats(all_chats, date_str, exclude_ids=rating_ids)
         write_tag_sheet(svc, tag_chats, date_str)
 
-        # 4. Log
         elapsed = round(time.time() - t0, 1)
         detail  = (f"{len(rating_chats)} rating chat | "
                    f"{len(tag_chats)} tag chat | "
@@ -777,18 +675,12 @@ def main():
         elapsed = round(time.time() - t0, 1)
         tb_str  = traceback.format_exc()
         print(f"[ERROR] {e}\n{tb_str}")
-
-        # Sheets log (mümkünse)
         try:
             svc = sheets_service()
-            write_log(svc, "COMMQA ERROR", date_str, elapsed,
-                      f"❌ {e}\n{tb_str}")
+            write_log(svc, "COMMQA ERROR", date_str, elapsed, f"❌ {e}\n{tb_str}")
         except Exception as log_err:
             print(f"[LOG] Log yazılamadı: {log_err}")
-
-        # Hata maili
         send_error_email(date_str, str(e), tb_str)
-
         sys.exit(1)
 
 if __name__ == "__main__":
