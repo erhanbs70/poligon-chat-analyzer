@@ -2,7 +2,7 @@
 # ============================================================
 # POLIGON RATING DASHBOARD — v1 (GitHub Actions)
 # Günlük: Rating 1 & 2 pivot — tag + agent breakdown
-# Haftalık: 7 günlük özet + trend — her Pazartesi
+# Haftalık: 7 günlük özet + trend — her Monday
 # Google Sheets API ile yazar — GAS timeout yok
 # ============================================================
 
@@ -90,16 +90,16 @@ def week_range_back(n_weeks=0):
     import pytz
     tz  = pytz.timezone("Europe/Sofia")
     now = datetime.now(tz)
-    # Bu haftanın Pazartesi'si
+    # Bu haftanın Monday'si
     this_monday = now - timedelta(days=now.weekday())
     end_dt   = this_monday - timedelta(days=1 + n_weeks * 7)          # önceki Pazar
-    start_dt = end_dt - timedelta(days=6)                              # önceki Pazartesi
+    start_dt = end_dt - timedelta(days=6)                              # önceki Monday
     return start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
 
 def is_monday():
     import pytz
     tz = pytz.timezone("Europe/Sofia")
-    return datetime.now(tz).weekday() == 0  # 0 = Pazartesi
+    return datetime.now(tz).weekday() == 0  # 0 = Monday
 
 # ── GOOGLE SHEETS ────────────────────────────────────────────
 def sheets_service():
@@ -232,7 +232,7 @@ def fetch_low_rating_chats(date_str):
         f"&include=chatWrapupCategory&include=postChatSurvey&include=chatAgent"
         f"&sortBy=startTime&sortOrder=asc"
     )
-    print(f"[FETCH] {date_str} low rating chatleri çekiliyor...")
+    print(f"[FETCH] {date_str} fetching low rating chats...")
     while page <= 40:
         url = f"{base}&pageIndex={page}&pageSize=500"
         try:
@@ -400,7 +400,7 @@ def build_pivots(low_chats, all_chats):
 # ── GÜNLÜK SHEET YAZ ─────────────────────────────────────────
 def write_daily_sheet(svc, date_str, tag_rows, agent_rows, total_low, total_all):
     sname = sheet_name_for(date_str)
-    print(f"[SHEET] {sname} yazılıyor...")
+    print(f"[SHEET] {sname} writing...")
 
     delete_sheet_if_exists(svc, sname)
     sid = ensure_sheet(svc, sname, index=0)
@@ -412,17 +412,17 @@ def write_daily_sheet(svc, date_str, tag_rows, agent_rows, total_low, total_all)
 
     rows = []
     # Başlık
-    rows.append([f"📊 Rating 1 & 2 Dashboard   |   {sname}   |   Low: {total_low} / {total_all} chat", "", "", "", "", ""])
+    rows.append([f"📊 Rating 1 & 2 Dashboard   |   {sname}   |   Low: {total_low} / {total_all} chats", "", "", "", "", ""])
     # Tag bölümü
     rows.append(["🏷️ BREAKDOWN BY TAG", "", "", "", "", ""])
-    rows.append(["Tag", "Rating 1 ❌", "Rating 2 🟠", "Toplam", "Pay (%)", ""])
+    rows.append(["Tag", "Rating 1 ❌", "Rating 2 🟠", "Total", "Share (%)", ""])
     for tr in tag_rows:
         rows.append(tr + [""])
     rows.append(["TOTAL", r1_tot, r2_tot, r1_tot+r2_tot, "100%", ""])
     rows.append(["", "", "", "", "", ""])
     # Agent bölümü
     rows.append(["👤 BREAKDOWN BY AGENT", "", "", "", "", ""])
-    rows.append(["Agent", "Rating 1 ❌", "Rating 2 🟠", "Low Toplam", "Toplam Chat", "% Oranı"])
+    rows.append(["Agent", "Rating 1 ❌", "Rating 2 🟠", "Low Total", "Total Chats", "% Rate"])
     for ar in agent_rows:
         rows.append(ar)
     ag_r1 = sum(r[1] for r in agent_rows)
@@ -503,7 +503,7 @@ def write_daily_sheet(svc, date_str, tag_rows, agent_rows, total_low, total_all)
     print(f"[SHEET] {sname} ✅ (low: {total_low}, all: {total_all})")
     return total_low, total_all
 
-# ── HAFTALIK SHEET YAZ ───────────────────────────────────────
+# ── WEEKLY SHEET YAZ ───────────────────────────────────────
 def write_weekly_sheet(svc, week_data, start_str, end_str, prev_week_data=None):
     """
     week_data: list of dict — her gün için
@@ -511,7 +511,7 @@ def write_weekly_sheet(svc, week_data, start_str, end_str, prev_week_data=None):
     prev_week_data: aynı yapı — trend için (None ise trend gösterilmez)
     """
     sname = "📊 Weekly"
-    print(f"[SHEET] Weekly sheet yazılıyor ({start_str} - {end_str})...")
+    print(f"[SHEET] Writing weekly sheet ({start_str} - {end_str})...")
 
     # Sheet varsa sil, yeniden oluştur
     delete_sheet_if_exists(svc, sname)
@@ -554,7 +554,7 @@ def write_weekly_sheet(svc, week_data, start_str, end_str, prev_week_data=None):
     if prev_low is not None and prev_all:
         trend_low = total_low_week - prev_low
         trend_pct_prev = f"{prev_low/prev_all*100:.1f}%"
-        trend_str = (f"▲ +{trend_low}" if trend_low > 0 else f"▼ {trend_low}") + f" vs geçen hafta ({prev_low} low)"
+        trend_str = (f"▲ +{trend_low}" if trend_low > 0 else f"▼ {trend_low}") + f" vs last week ({prev_low} low)"
     else:
         trend_str      = "—"
         trend_pct_prev = "—"
@@ -599,32 +599,32 @@ def write_weekly_sheet(svc, week_data, start_str, end_str, prev_week_data=None):
     NCOLS = 7  # A..G
 
     # ── 1. ÖZET BÖLÜMÜ ──
-    add([f"📊 Rating Dashboard — Haftalık Özet   |   {week_label}", "","","","","",""], "title")
+    add([f"📊 Rating Dashboard — Weekly Summary   |   {week_label}", "","","","","",""], "title")
     add(["","","","","","",""])  # boşluk
 
-    add(["📌 HAFTALIK ÖZET", "","","","","",""], "summary_header")
-    add(["Metrik", "Değer", "Trend", "","","",""], "summary_col")
-    add(["Toplam Low Rating (1+2)", total_low_week, trend_str, "","","",""])
-    add(["Toplam Chat", total_all_week, "", "","","",""])
-    add(["Low Rating Oranı", low_pct_week,
-         f"Geçen hafta: {trend_pct_prev}" if trend_pct_prev != "—" else "—",
+    add(["📌 WEEKLY SUMMARY", "","","","","",""], "summary_header")
+    add(["Metric", "Value", "Trend", "","","",""], "summary_col")
+    add(["Total Low Rating (1+2)", total_low_week, trend_str, "","","",""])
+    add(["Total Chats", total_all_week, "", "","","",""])
+    add(["Low Rating Rate", low_pct_week,
+         f"Last week: {trend_pct_prev}" if trend_pct_prev != "—" else "—",
          "","","",""])
     if worst_day:
-        add(["En Kötü Gün", sheet_name_for(worst_day["date"]),
+        add(["Worst Day", sheet_name_for(worst_day["date"]),
              f"{worst_day['low']} low / {worst_day['all']} chat ({worst_day['pct']})",
              "","","",""])
     if worst_tag:
         wt_tot = worst_tag[1]["r1"] + worst_tag[1]["r2"]
-        add(["En Sorunlu Tag", worst_tag[0], f"{wt_tot} low rating", "","","",""])
+        add(["Most Problematic Tag", worst_tag[0], f"{wt_tot} low rating", "","","",""])
     if worst_agent:
         wa_tot = worst_agent[1]["r1"] + worst_agent[1]["r2"]
-        add(["En Çok Low Alan Agent", worst_agent[0], f"{wa_tot} low rating", "","","",""])
+        add(["Most Low Ratings Agent", worst_agent[0], f"{wa_tot} low rating", "","","",""])
 
     add(["","","","","","",""])  # boşluk
 
-    # ── 2. GÜNLÜK DAĞILIM ──
-    add(["📅 GÜNLÜK DAĞILIM", "","","","","",""], "daily_header")
-    add(["Gün", "Tarih", "Low (1+2)", "Toplam Chat", "Low %", "Rating 1", "Rating 2"], "daily_col")
+    # ── 2. DAILY BREAKDOWN ──
+    add(["📅 DAILY BREAKDOWN", "","","","","",""], "daily_header")
+    add(["Day", "Date", "Low (1+2)", "Total Chats", "Low %", "Rating 1", "Rating 2"], "daily_col")
     row_meta["daily_data_start"] = len(rows)
     for d in daily_totals:
         r1_cnt = sum(c[1] for c in d.get("tag_rows_raw", []))  # fallback
@@ -635,21 +635,21 @@ def write_weekly_sheet(svc, week_data, start_str, end_str, prev_week_data=None):
             r1_cnt = sum(tr[1] for tr in wd["tag_rows"])
             r2_cnt = sum(tr[2] for tr in wd["tag_rows"])
         dt = datetime.strptime(d["date"], "%Y-%m-%d")
-        day_name = ["Pzt","Sal","Çar","Per","Cum","Cmt","Paz"][dt.weekday()]
+        day_name = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][dt.weekday()]
         rows.append([day_name, sheet_name_for(d["date"]), d["low"], d["all"], d["pct"], r1_cnt, r2_cnt])
     row_meta["daily_data_end"] = len(rows) - 1
 
     # Haftalık toplam
     total_r1 = sum(tr[1] for tr in weekly_tag_rows)
     total_r2 = sum(tr[2] for tr in weekly_tag_rows)
-    rows.append(["TOPLAM", "", total_low_week, total_all_week, low_pct_week, total_r1, total_r2])
+    rows.append(["TOTAL", "", total_low_week, total_all_week, low_pct_week, total_r1, total_r2])
     row_meta["daily_total"] = len(rows) - 1
 
     add(["","","","","","",""])
 
     # ── 3. TAG PIVOT ──
-    add(["🏷️ TAG BREAKDOWN — HAFTALIK", "","","","","",""], "tag_header")
-    add(["Tag", "Rating 1 ❌", "Rating 2 🟠", "Toplam", "Pay (%)", "", ""], "tag_col")
+    add(["🏷️ TAG BREAKDOWN — WEEKLY", "","","","","",""], "tag_header")
+    add(["Tag", "Rating 1 ❌", "Rating 2 🟠", "Total", "Share (%)", "", ""], "tag_col")
     row_meta["tag_data_start"] = len(rows)
     for tr in weekly_tag_rows:
         rows.append(tr + ["", ""])
@@ -662,8 +662,8 @@ def write_weekly_sheet(svc, week_data, start_str, end_str, prev_week_data=None):
     add(["","","","","","",""])
 
     # ── 4. AGENT PIVOT ──
-    add(["👤 AGENT BREAKDOWN — HAFTALIK", "","","","","",""], "agent_header")
-    add(["Agent", "Rating 1 ❌", "Rating 2 🟠", "Low Toplam", "Toplam Chat", "% Oranı", ""], "agent_col")
+    add(["👤 AGENT BREAKDOWN — WEEKLY", "","","","","",""], "agent_header")
+    add(["Agent", "Rating 1 ❌", "Rating 2 🟠", "Low Total", "Total Chats", "% Rate", ""], "agent_col")
     row_meta["agent_data_start"] = len(rows)
     for ar in weekly_agent_rows:
         rows.append(ar + [""])
@@ -772,7 +772,7 @@ def write_weekly_sheet(svc, week_data, start_str, end_str, prev_week_data=None):
 
 # ── HATA MAİLİ ───────────────────────────────────────────────
 def send_error_email(date_str, error_msg, tb_str):
-    subject = f"⚠️ Rating Dashboard HATA | {date_str}"
+    subject = f"⚠️ Rating Dashboard ERROR | {date_str}"
     html = f"""<!DOCTYPE html><html><body style="font-family:monospace;padding:20px;">
 <h2 style="color:#c0392b;">Rating Dashboard — Hata Raporu</h2>
 <p><strong>Tarih:</strong> {date_str}</p>
@@ -792,9 +792,9 @@ def send_error_email(date_str, error_msg, tb_str):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
             s.login(GMAIL_USER, GMAIL_PASS)
             s.sendmail(GMAIL_USER, REPORT_EMAILS, msg.as_string())
-        print(f"[EMAIL] Hata maili gönderildi")
+        print(f"[EMAIL] Error mail sent")
     except Exception as e:
-        print(f"[EMAIL] Gönderilemedi: {e}")
+        print(f"[EMAIL] Could not send: {e}")
 
 # ── MAIN ─────────────────────────────────────────────────────
 def main():
@@ -814,11 +814,11 @@ def main():
         if total_low > 0:
             write_daily_sheet(svc, date_str, tag_rows, agent_rows, total_low, total_all)
         else:
-            print(f"[MAIN] {date_str} için low rating yok, sheet yazılmadı.")
+            print(f"[MAIN] No low ratings for {date_str}, sheet skipped.")
 
-        # ── Haftalık — sadece Pazartesi ──
+        # ── Haftalık — sadece Monday ──
         if is_monday() or mode == "weekly":
-            print("[MAIN] Pazartesi — haftalık rapor hazırlanıyor...")
+            print("[MAIN] Monday — generating weekly report...")
             start_str, end_str = week_range_back(0)
 
             # Geçen haftanın her günü için veri çek
@@ -839,7 +839,7 @@ def main():
                         "total_low": tl, "total_all": ta,
                     })
                 except Exception as e:
-                    print(f"[WEEKLY] {ds} atlandı: {e}")
+                    print(f"[WEEKLY] {ds} skipped: {e}")
                     week_data.append({
                         "date": ds, "low_chats": [], "all_count": [],
                         "tag_rows": [], "agent_rows": [],
@@ -872,7 +872,7 @@ def main():
             write_weekly_sheet(svc, week_data, start_str, end_str, prev_week_data)
 
         elapsed = round(time.time() - t0, 1)
-        print(f"\n[DONE] Tamamlandı — {elapsed}s")
+        print(f"\n[DONE] Done — {elapsed}s")
 
     except Exception as e:
         elapsed = round(time.time() - t0, 1)
