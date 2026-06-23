@@ -149,13 +149,42 @@ def clear_sheet(svc, sheet_id, sheet_name):
     except Exception:
         pass  # Merge yoksa hata fırlatır, ignore
 
-def write_values(svc, sheet_name, values, start="A1", user_entered=False):
+def write_values(svc, sheet_name, values, start="A1"):
     svc.spreadsheets().values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"'{sheet_name}'!{start}",
-        valueInputOption="USER_ENTERED" if user_entered else "RAW",
+        valueInputOption="RAW",
         body={"values": values},
     ).execute()
+
+def apply_hyperlinks(svc, sheet_id, links, data_start_row, link_col=9):
+    """links: URL listesi. Her satıra Chati Aç + tıklanabilir link yazar."""
+    reqs = []
+    for idx, url in enumerate(links):
+        if not url:
+            continue
+        row_i = data_start_row + idx
+        reqs.append({
+            "updateCells": {
+                "range": rng(sheet_id, row_i, link_col, row_i, link_col),
+                "rows": [{
+                    "values": [{
+                        "userEnteredValue": {"stringValue": "Chati Ac"},
+                        "userEnteredFormat": {
+                            "horizontalAlignment": "CENTER",
+                            "textFormat": {
+                                "link":            {"uri": url},
+                                "foregroundColor": rgb("#1155cc"),
+                                "underline":       True,
+                            }
+                        }
+                    }]
+                }],
+                "fields": "userEnteredValue,userEnteredFormat.horizontalAlignment,userEnteredFormat.textFormat"
+            }
+        })
+    for i in range(0, len(reqs), 500):
+        batch_format(svc, reqs[i:i + 500])
 
 def batch_format(svc, requests_list):
     if not requests_list:
@@ -504,8 +533,7 @@ def write_rating_sheet(svc, chats, date_str):
     for c in chats:
         s       = c.get("postChatSurvey") or {}
         g       = s.get("ratingGrade")
-        cid     = str(c.get("id") or c.get("chatId") or "")
-        link    = f'=HYPERLINK("{PORTAL_BASE}?chatId={cid}","Chati Aç")' if cid else ""
+        cid = str(c.get("id") or c.get("chatId") or "")
         rows.append([
             api_agent(c),
             api_visitor(c),
@@ -516,11 +544,16 @@ def write_rating_sheet(svc, chats, date_str):
             api_duration(c),
             int(g) if g is not None else "",
             (s.get("ratingComment") or "").strip(),
-            link,
+            "",  # link sütunu — apply_hyperlinks ile doldurulacak
         ])
 
-    write_values(svc, RATING_SHEET, header_row + col_headers + rows, user_entered=True)
+    write_values(svc, RATING_SHEET, header_row + col_headers + rows)
 
+    links = [
+        f"{PORTAL_BASE}?chatId={str(c.get('id') or c.get('chatId') or '')}"
+        if (c.get('id') or c.get('chatId')) else ""
+        for c in chats
+    ]
     fmt_reqs = _header_fmt_reqs(
         sheet_id, n_cols=10,
         title_bg="#1a1a2e", title_fg="#f0c040",
@@ -530,6 +563,7 @@ def write_rating_sheet(svc, chats, date_str):
     fmt_reqs += _row_fmt_reqs(sheet_id, chats, data_start_row=2,
                                include_tag_missing=False)
     batch_format(svc, fmt_reqs)
+    apply_hyperlinks(svc, sheet_id, links, data_start_row=2)
     print(f"[SHEET] Rating & Comment ✅ ({len(chats)} satır)")
 
 # ── SHEETS YAZ: Tag Listesi ───────────────────────────────────
@@ -547,7 +581,6 @@ def write_tag_sheet(svc, chats, date_str):
         s   = c.get("postChatSurvey") or {}
         g   = s.get("ratingGrade")
         cid = str(c.get("id") or c.get("chatId") or "")
-        link = f'=HYPERLINK("{PORTAL_BASE}?chatId={cid}","Chati Aç")' if cid else ""
         rows.append([
             api_agent(c),
             api_visitor(c),
@@ -558,11 +591,16 @@ def write_tag_sheet(svc, chats, date_str):
             api_duration(c),
             int(g) if g is not None else "",
             (s.get("ratingComment") or "").strip(),
-            link,
+            "",  # link sütunu — apply_hyperlinks ile doldurulacak
         ])
 
-    write_values(svc, TAG_SHEET, header_row + col_headers + rows, user_entered=True)
+    write_values(svc, TAG_SHEET, header_row + col_headers + rows)
 
+    links = [
+        f"{PORTAL_BASE}?chatId={str(c.get('id') or c.get('chatId') or '')}"
+        if (c.get('id') or c.get('chatId')) else ""
+        for c in chats
+    ]
     fmt_reqs = _header_fmt_reqs(
         sheet_id, n_cols=10,
         title_bg="#1a1a2e", title_fg="#f0c040",
@@ -572,6 +610,7 @@ def write_tag_sheet(svc, chats, date_str):
     fmt_reqs += _row_fmt_reqs(sheet_id, chats, data_start_row=2,
                                include_tag_missing=True)
     batch_format(svc, fmt_reqs)
+    apply_hyperlinks(svc, sheet_id, links, data_start_row=2)
     print(f"[SHEET] Tag Listesi ✅ ({len(chats)} satır)")
 
 # ── SHEETS YAZ: Log ───────────────────────────────────────────
