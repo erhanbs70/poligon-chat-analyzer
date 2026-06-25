@@ -270,9 +270,6 @@ def build_prompt(chat_texts, date_str):
             "brand":    "SB/BS/TB",
             "reason":   "Neden kritik — tutar, tehdit veya aciliyet — 1 cümle"
         }],
-        "action_items": [
-            "Departman + yapılacak aksiyon — 1 cümle"
-        ],
         "summary": "3-4 cümle genel değerlendirme — dominant sorun, trend, önemli kullanıcı adları"
     }, ensure_ascii=False)
 
@@ -294,8 +291,7 @@ KURAL 3 — "Diğer" kategorisi YASAK.
 KURAL 4 — brand_breakdown: sadece o konuda hangi brand kaç chat var.
 KURAL 5 — short_note: somut, spesifik, rakam/detay içersin.
 KURAL 6 — critical: yüksek tutar (5000 TL+), hesap kapatma/silinme tehdidi, acil çözüm bekleyen, Rating 1 veren MÜŞTERİLER. username alanına ŞİKAYET EDEN MÜŞTERİNİN adını yaz, CS temsilcisi adını ASLA yazma. Yoksa boş liste.
-KURAL 7 — action_items: en az 2, en fazla 5. Her biri "Finans Departmanı: ..." formatında hangi ekip ne yapmalı.
-KURAL 8 — summary: 3-4 cümle. Dominant sorun, brand dağılımı, dikkat çeken trend ve önemli kullanıcı varsa isim yaz.
+KURAL 7 — summary: 3-4 cümle. Dominant sorun, brand dağılımı, dikkat çeken trend ve önemli kullanıcı varsa isim yaz.
 
 GÖREV: Şikayet/sorunları konulara göre grupla, büyükten küçüğe sırala.
 SB=Superbetin | BS=Betsat | TB=Turkbet
@@ -534,18 +530,7 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
                 f'<p style="margin:22px 0 10px;font-size:11px;font-weight:800;color:#2F1555;text-transform:uppercase;letter-spacing:.12em;font-family:Montserrat,Arial,sans-serif;">🚨 Kritik Kullanıcılar</p><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-top:3px solid #FFE600;border-radius:0 0 8px 8px;">{rows}</table>'
             )
 
-    # ── Aksiyon önerileri ──
-    actions_html = ""
-    if ai_data and ai_data.get("action_items"):
-        items = ai_data["action_items"]
-        if items:
-            rows = "".join(
-                f'<table cellpadding="0" cellspacing="0" style="margin-bottom:9px;width:100%;"><tr><td style="vertical-align:top;width:24px;padding-right:10px;"><span style="display:inline-block;width:20px;height:20px;background:#2F1555;color:#FFE600;border-radius:50%;font-size:10px;font-weight:700;text-align:center;line-height:20px;font-family:Montserrat,Arial,sans-serif;">{i+1}</span></td><td style="font-size:13px;color:#4b5563;line-height:1.6;vertical-align:top;font-family:Montserrat,Arial,sans-serif;">{a}</td></tr></table>'
-                for i, a in enumerate(items)
-            )
-            actions_html = (
-                f'<p style="margin:22px 0 10px;font-size:11px;font-weight:800;color:#2F1555;text-transform:uppercase;letter-spacing:.12em;font-family:Montserrat,Arial,sans-serif;">✅ Önerilen Aksiyonlar</p>{rows}'
-            )
+    actions_html = ""  # kaldırıldı
 
     no_data_html = '<p style="color:#B28ABF;font-size:13px;font-family:Montserrat,Arial,sans-serif;">Şikayet/sorun tespit edilemedi.</p>'
 
@@ -616,7 +601,6 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
   </tr></table>
   {'<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-radius:8px;overflow:hidden;">' + topics_html + '</table>' if topics_html else no_data_html}
   {critical_html}
-  {actions_html}
   {summary_html}
 </td></tr>
 </table>
