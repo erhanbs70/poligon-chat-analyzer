@@ -272,6 +272,9 @@ def fetch_all_chats(date_str):
         f"&sortBy=startTime&sortOrder=asc"
     )
 
+    import pytz as _pytz
+    _target_tz = _pytz.timezone("Europe/Sofia")
+
     print(f"[FETCH] {date_str} chatleri çekiliyor...")
     while page <= 40:
         url = f"{base}&pageIndex={page}&pageSize=500"
@@ -287,12 +290,33 @@ def fetch_all_chats(date_str):
             chats = r.json().get("list", [])
             if not chats:
                 break
+
+            page_in  = 0
+            page_out = 0
             for c in chats:
                 cid = str(c.get("id") or c.get("chatId") or "")
-                if cid and cid not in seen:
+                ts  = c.get("startTime") or c.get("start_time") or ""
+                if not cid or cid in seen:
+                    continue
+                if in_sofia_range(ts, date_str):
                     seen.add(cid)
                     result.append(c)
-            print(f"[FETCH] Sayfa {page}: {len(chats)} chat ({len(result)} toplam)")
+                    page_in += 1
+                elif ts:
+                    # Sonraki güne geçtik mi kontrol et
+                    try:
+                        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        if dt.astimezone(_target_tz).strftime("%Y-%m-%d") > date_str:
+                            page_out += 1
+                    except Exception:
+                        pass
+
+            print(f"[FETCH] Sayfa {page}: {len(chats)} chat | bugun:{page_in} dis:{page_out} ({len(result)} toplam)")
+
+            # Sayfanin tamami hedef tarih sonrasindaysa dur
+            if page_out > 0 and page_in == 0:
+                print("[FETCH] Hedef tarih geçildi, durduruluyor.")
+                break
             if len(chats) < 500:
                 break
             page += 1
