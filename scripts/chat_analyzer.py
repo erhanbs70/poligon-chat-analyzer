@@ -636,7 +636,7 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
 </body></html>'''
 
 # ── EXCEL EKİ ────────────────────────────────────────────────
-def build_excel(complaint_chats, date_str):
+def build_excel(complaint_chats, date_str, ai_data=None):
     """Şikayet listesini Excel olarak oluştur (openpyxl)."""
     try:
         import openpyxl
@@ -721,6 +721,146 @@ def build_excel(complaint_chats, date_str):
     # Auto-filter
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
 
+    # ── SEKME 2: AI Kategori Grupları ──────────────────────────
+    if ai_data and ai_data.get("categories"):
+        cats = sorted(ai_data["categories"], key=lambda x: x.get("count", 0), reverse=True)
+
+        ws2 = wb.create_sheet(title="Kategori Grupları")
+
+        # Sütun genişlikleri
+        ws2_cols = ["Kategori", "Brand", "Kullanıcı Adı", "Tag", "Rating", "Yorum", "Tarih", "Chat Linki"]
+        ws2_widths = [35, 8, 22, 30, 8, 60, 20, 55]
+        for ci, (h, w) in enumerate(zip(ws2_cols, ws2_widths), 1):
+            cell = ws2.cell(row=1, column=ci, value=h)
+            cell.font      = Font(bold=True, color=HDR_FG, name="Calibri", size=10)
+            cell.fill      = PatternFill("solid", fgColor=HDR_BG)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            ws2.column_dimensions[get_column_letter(ci)].width = w
+        ws2.row_dimensions[1].height = 22
+        ws2.freeze_panes = "A2"
+        ws2.auto_filter.ref = f"A1:{get_column_letter(len(ws2_cols))}1"
+
+        # Her kategori için eşleşen chatler — tag veya yorum benzerliğine göre
+        # Strateji: her kategorinin keyword'lerini çıkar, tag/yorum ile eşleştir
+        import re as _re
+
+        def cat_keywords(cat_name):
+            """Kategori adından arama keyword'leri üret."""
+            name = cat_name.lower()
+            kws = []
+            if any(w in name for w in ["yatırım", "deposit", "para yatır", "yansımadı", "geçmedi", "eksikliği"]):
+                kws += ["deposit_missing", "deposit_issue", "deposit_query"]
+            if any(w in name for w in ["cashback", "casino cashback"]):
+                kws += ["casino_cashback_query"]
+            if any(w in name for w in ["spor cashback", "sport cashback"]):
+                kws += ["sport_cashback_query"]
+            if any(w in name for w in ["bahis kural", "betting", "kural"]):
+                kws += ["betting_rules_query"]
+            if any(w in name for w in ["oyun adil", "dolandırıcı", "game_fairness", "adil"]):
+                kws += ["game_fairness"]
+            if any(w in name for w in ["hesap kapat", "hesap sil", "ac_closure", "kapatma"]):
+                kws += ["ac_closure_request"]
+            if any(w in name for w in ["çekim", "para çek", "ödeme", "withdrawal"]):
+                kws += ["withdrawal", "wd"]
+            if any(w in name for w in ["teknik", "hata", "sistem", "error"]):
+                kws += ["deposit_issue", "deposit_missing"]
+            if any(w in name for w in ["bonus", "deneme", "goodwill", "iyi niyet"]):
+                kws += ["goodwill_query", "bonus", "deneme"]
+            if any(w in name for w in ["temsilci", "küfür", "hakaret", "davranış"]):
+                kws += [""]  # yorum bazlı
+            return kws if kws else []
+
+        # Kategori → chat eşleştirme
+        assigned = set()  # aynı chat birden fazla kategoriye girmesin
+        current_row = 2
+
+        # Kategori başlığı rengi
+        CAT_COLORS = [
+            "1a237e", "283593", "303f9f", "3949ab", "3f51b5",
+            "5c6bc0", "7986cb", "512da8", "673ab7", "7b1fa2",
+        ]
+
+        for cat_idx, cat in enumerate(cats):
+            cat_name = cat.get("name", "")
+            cat_count = cat.get("count", 0)
+            kws = cat_keywords(cat_name)
+
+            # Bu kategoriye ait chatleri bul
+            matched = []
+            for c in complaint_chats:
+                cid = str(c.get("id") or c.get("chatId") or "")
+                if cid in assigned:
+                    continue
+                tag     = get_tag(c).lower()
+                comment = get_rating_comment(c).lower()
+                match   = False
+                if kws:
+                    for kw in kws:
+                        if kw and (kw in tag or kw in comment):
+                            match = True
+                            break
+                if match:
+                    matched.append(c)
+
+            if not matched:
+                # Keyword eşleşmedi — yoruma göre dene (son çare)
+                pass
+
+            if not matched:
+                continue
+
+            # Kategori başlık satırı
+            cat_color = CAT_COLORS[cat_idx % len(CAT_COLORS)]
+            merge_range = f"A{current_row}:{get_column_letter(len(ws2_cols))}{current_row}"
+            ws2.merge_cells(merge_range)
+            title_cell = ws2.cell(row=current_row, column=1,
+                                  value=f"  {cat_name}  ({len(matched)} şikayet)")
+            title_cell.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+            title_cell.fill      = PatternFill("solid", fgColor=cat_color)
+            title_cell.alignment = Alignment(vertical="center")
+            ws2.row_dimensions[current_row].height = 20
+            current_row += 1
+
+            # Bu kategorinin chatlerini yaz
+            for c in matched:
+                cid     = str(c.get("id") or c.get("chatId") or "")
+                brand   = get_brand(c)
+                visitor = c.get("preChatName") or c.get("name") or c.get("visitorName") or ""
+                tag_raw = get_tag(c) or "—"
+                rating  = get_rating(c) or ""
+                comment = get_rating_comment(c)
+                ts      = c.get("startTime") or c.get("start_time") or ""
+                link    = f"{portal}?chatId={cid}" if cid else ""
+
+                try:
+                    import pytz as _pytz2
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    ts_fmt = dt.astimezone(_pytz2.timezone("Europe/Sofia")).strftime("%d/%m/%Y %H:%M")
+                except Exception:
+                    ts_fmt = ts
+
+                bg = ROW_ALT if (current_row % 2 == 0) else "FFFFFF"
+                if rating == 1:
+                    bg = RED_BG
+                elif rating == 2:
+                    bg = YLW_BG
+
+                values = [cat_name, brand, visitor, tag_raw, rating, comment, ts_fmt, link]
+                for ci, val in enumerate(values, 1):
+                    cell = ws2.cell(row=current_row, column=ci, value=val)
+                    cell.fill      = PatternFill("solid", fgColor=bg)
+                    cell.font      = Font(name="Calibri", size=9)
+                    cell.alignment = Alignment(vertical="center", wrap_text=(ci == 6))
+                    cell.border    = border
+                    if ci == 8 and val:
+                        cell.hyperlink = val
+                        cell.value     = "Chati Aç"
+                        cell.font      = Font(name="Calibri", size=9, color="1155CC", underline="single")
+
+                ws2.row_dimensions[current_row].height = 18
+                assigned.add(cid)
+                current_row += 1
+
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -728,7 +868,7 @@ def build_excel(complaint_chats, date_str):
 
 
 # ── EMAIL ─────────────────────────────────────────────────────
-def send_email(html, date_str, stats, complaint_chats=None):
+def send_email(html, date_str, stats, complaint_chats=None, ai_data=None):
     subject = (f"CS Şikayet Analizi | {date_str} | "
                f"{stats['agent_count']} Agent | {stats['complaint_count']} Şikayet")
     msg = MIMEMultipart("mixed")
@@ -745,7 +885,7 @@ def send_email(html, date_str, stats, complaint_chats=None):
 
     # Excel eki
     if complaint_chats:
-        xlsx_bytes = build_excel(complaint_chats, date_str)
+        xlsx_bytes = build_excel(complaint_chats, date_str, ai_data=ai_data)
         if xlsx_bytes:
             attachment = MIMEBase("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             attachment.set_payload(xlsx_bytes)
@@ -800,7 +940,7 @@ def main():
             print("[AI] Analiz başarısız")
 
     html = build_html(ai_data, stats, date_str, model_used, ai_usage)
-    send_email(html, date_str, stats, complaint_chats=complaint_chats)
+    send_email(html, date_str, stats, complaint_chats=complaint_chats, ai_data=ai_data)
     print(f"\n[DONE] Tamamlandı — {date_str}")
 
 if __name__ == "__main__":
