@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 # ============================================================
-# POLIGON COMM100 CHAT ANALYZER — v2
-# Sadece CS departmanı, sadece şikayet/sorun konuları
+# POLIGON COMM100 CHAT ANALYZER — v4
+# fix: mesaj API çağrısı kaldırıldı (timeout'a yol açıyordu)
+# fix: departmentId query string'e taşındı
+# fix: Claude max_tokens 8000, Groq max_tokens eklendi
+# Şikayet tespiti: rating 1-2 + QA tag'li chatler
+# (zaten search API'den gelen veriler yeterli, ayrı mesaj çağrısı yok)
 # ============================================================
 
 import os
+import sys
 import json
 import base64
 import requests
@@ -33,7 +38,13 @@ CAMPAIGNS = {
     "TB": "6712311a-2268-408c-a803-b338a1308010"
 }
 
-BASE_URL = f"https://dash15.lively-chat.com/api/LiveChat/chats:search?siteId={SITE_ID}"
+# QA tag'leri — bu tag'leri taşıyan chatler şikayet/sorun içerir
+QA_TAGS = [
+    "game_fairness", "ac_closure_request", "casino_cashback_query",
+    "sport_cashback_query", "deposit_issue", "deposit_missing",
+    "betting_rules_query", "deposit_query"
+]
+
 gemini_key_index = 0
 
 # ── AUTH ─────────────────────────────────────────────────────
@@ -43,44 +54,63 @@ def get_auth():
 # ── DATE ─────────────────────────────────────────────────────
 def get_yesterday_sofia():
     import pytz
-    sofia_tz = pytz.timezone("Europe/Sofia")
-    yesterday = datetime.now(sofia_tz) - timedelta(days=1)
-    return yesterday.strftime("%Y-%m-%d")
+    tz = pytz.timezone("Europe/Sofia")
+    return (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
 
 def sofia_to_utc_range(date_str):
     import pytz
-    sofia_tz = pytz.timezone("Europe/Sofia")
-    start = sofia_tz.localize(datetime.strptime(date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S"))
-    end   = sofia_tz.localize(datetime.strptime(date_str + " 23:59:59", "%Y-%m-%d %H:%M:%S"))
+    tz    = pytz.timezone("Europe/Sofia")
+    start = tz.localize(datetime.strptime(date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S"))
+    end   = tz.localize(datetime.strptime(date_str + " 23:59:59", "%Y-%m-%d %H:%M:%S"))
+    utc   = pytz.utc
     return (
-        start.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        end.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        start.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        end.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     )
 
-# ── COMM100 FETCH — sadece CS dept ───────────────────────────
+def in_sofia_range(ts_str, date_str):
+    if not ts_str:
+        return True
+    import pytz
+    tz = pytz.timezone("Europe/Sofia")
+    try:
+        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        return dt.astimezone(tz).strftime("%Y-%m-%d") == date_str
+    except Exception:
+        return True
+
+# ── COMM100 FETCH ─────────────────────────────────────────────
 def fetch_cs_chats(date_str):
+    """
+    CS departmanı chatlerini çek.
+    departmentId query string'de — POST body filtresi çalışmıyor.
+    include=chatWrapup: tag bilgisi için
+    include=postChatSurvey: rating bilgisi için
+    include=messages YOK — ayrı API çağrısına gerek yok
+    """
     start_time, end_time = sofia_to_utc_range(date_str)
-    auth = get_auth()
-    all_chats = []
-    page = 1
+    auth     = get_auth()
+    result   = []
     seen_ids = set()
+    page     = 1
 
     print(f"[FETCH] CS chatleri çekiliyor: {date_str}")
 
     while page <= 40:
-        url = (f"{BASE_URL}&pageIndex={page}&pageSize=500"
-               f"&include=chatAgent&include=chatWrapup&include=postChatSurvey&include=messages"
-               f"&sortBy=startTime&sortOrder=asc")
+        url = (
+            f"https://dash15.lively-chat.com/api/LiveChat/chats:search"
+            f"?siteId={SITE_ID}"
+            f"&pageIndex={page}&pageSize=500"
+            f"&include=chatAgent&include=chatWrapup&include=postChatSurvey"
+            f"&sortBy=startTime&sortOrder=asc"
+            f"&departmentId={CS_DEPT_ID}"
+        )
         try:
             r = requests.post(
                 url,
                 headers={"Authorization": auth, "Content-Type": "application/json"},
-                json={
-                    "startTime": start_time,
-                    "endTime": end_time,
-                    "departmentId": CS_DEPT_ID
-                },
-                timeout=60
+                json={"startTime": start_time, "endTime": end_time},
+                timeout=90,
             )
             if r.status_code != 200:
                 print(f"[FETCH] HTTP {r.status_code} sayfa {page}: {r.text[:200]}")
@@ -94,22 +124,21 @@ def fetch_cs_chats(date_str):
                 cid = str(c.get("id") or c.get("chatId") or "")
                 if cid and cid not in seen_ids:
                     seen_ids.add(cid)
-                    all_chats.append(c)
+                    if in_sofia_range(c.get("startTime") or c.get("start_time"), date_str):
+                        result.append(c)
 
-            print(f"[FETCH] Sayfa {page}: {len(chats)} chat ({len(all_chats)} toplam)")
+            print(f"[FETCH] Sayfa {page}: {len(chats)} chat ({len(result)} toplam)")
             if len(chats) < 500:
                 break
             page += 1
-            time.sleep(0.5)
+            time.sleep(0.3)
 
         except Exception as e:
             print(f"[FETCH] Hata sayfa {page}: {e}")
             break
 
-    print(f"[FETCH] Toplam {len(all_chats)} CS chat çekildi")
-    return all_chats
-
-# fetch_chat_messages kaldırıldı — mesajlar artık chat listesiyle birlikte geliyor
+    print(f"[FETCH] Toplam {len(result)} CS chat çekildi")
+    return result
 
 # ── HELPERS ──────────────────────────────────────────────────
 def get_agent_name(chat):
@@ -127,90 +156,134 @@ def get_brand(chat):
     for brand, camp_id in CAMPAIGNS.items():
         if cid == camp_id.lower():
             return brand
-    url = chat.get("requestingPageURL", "").lower()
+    url = (chat.get("requestingPageURL") or "").lower()
     if "superbetin" in url: return "SB"
-    if "betsat" in url: return "BS"
-    if "turkbet" in url: return "TB"
+    if "betsat"     in url: return "BS"
+    if "turkbet"    in url: return "TB"
     return "?"
 
 def is_bot_only(chat):
     return chat.get("chatType") == "chatBotOnly"
 
-def get_visitor_messages(messages):
-    """Ziyaretçi mesajlarını birleştir, max 8 mesaj"""
-    msgs = []
-    for m in messages:
-        if m.get("senderType") == "visitor":
-            text = (m.get("message") or "").strip()
-            if text and len(text) > 3:
-                msgs.append(text)
-    return " | ".join(msgs[:8])
+def get_tag(chat):
+    """chatWrapup.categoriesName'den ana tag'i çıkar."""
+    import re
+    cat = (chat.get("chatWrapup") or {}).get("categoriesName") or ""
+    if not cat:
+        return ""
+    inner = [m.group(1).strip() for m in re.finditer(r"\(([^)]+)\)", cat)
+             if not re.search(r"VIP", m.group(1), re.I)]
+    for t in inner:
+        if "_" in t:
+            return t
+    if inner:
+        return inner[0]
+    parts = [p.strip() for p in re.sub(r"\([^)]*\)", "", cat).split(",") if p.strip()]
+    for p in parts:
+        if "_" in p:
+            return p
+    return parts[0] if parts else ""
 
-# ── PROCESS: mesajlar zaten chat içinde geldi ────────────────
+def get_rating(chat):
+    s = chat.get("postChatSurvey") or {}
+    g = s.get("ratingGrade")
+    return int(g) if g is not None else None
+
+def get_rating_comment(chat):
+    s = chat.get("postChatSurvey") or {}
+    return (s.get("ratingComment") or "").strip()
+
+def is_complaint_chat(chat):
+    """
+    Şikayet/sorun göstergesi:
+    1. Rating 1 veya 2
+    2. QA tag'li (deposit_issue, game_fairness vb.)
+    3. Rating comment varsa
+    """
+    rating  = get_rating(chat)
+    tag     = get_tag(chat).lower()
+    comment = get_rating_comment(chat)
+
+    if rating in (1, 2):
+        return True
+    if any(qa in tag for qa in QA_TAGS):
+        return True
+    if comment and len(comment) > 10:
+        return True
+    return False
+
+# ── PROCESS ──────────────────────────────────────────────────
 def process_chats(chats):
-    agent_chats = [c for c in chats if not is_bot_only(c)]
-    print(f"[PROCESS] {len(chats)} CS chat → {len(agent_chats)} agent chat")
+    """
+    Şikayet içeren chatleri tespit et.
+    Mesaj API çağrısı YOK — tag + rating zaten mevcut.
+    """
+    agent_chats     = [c for c in chats if not is_bot_only(c)]
+    complaint_chats = [c for c in agent_chats if is_complaint_chat(c)]
 
+    print(f"[PROCESS] {len(chats)} CS chat → {len(agent_chats)} agent → {len(complaint_chats)} şikayet")
+
+    # AI için chat özetleri oluştur
     chat_texts = []
-    for chat in agent_chats:
-        chat_id = str(chat.get("id") or chat.get("chatId") or "")
-        brand   = get_brand(chat)
+    for c in complaint_chats:
+        brand   = get_brand(c)
+        tag     = get_tag(c) or "—"
+        rating  = get_rating(c)
+        comment = get_rating_comment(c)
+        agent   = get_agent_name(c)
 
-        # Mesajlar zaten fetch sırasında geldi — ayrı API çağrısı yok
-        messages     = chat.get("messages") or []
-        visitor_msgs = get_visitor_messages(messages)
-
-        if not visitor_msgs or len(visitor_msgs) < 10:
-            continue
+        # AI'a gönderilecek özet satır
+        parts = [f"[{brand}]", f"Tag:{tag}"]
+        if rating:
+            parts.append(f"Rating:{rating}")
+        if comment:
+            parts.append(f"Yorum:{comment[:120]}")
+        if agent:
+            parts.append(f"Agent:{agent}")
 
         chat_texts.append({
-            "chat_id":      chat_id,
-            "brand":        brand,
-            "visitor_msgs": visitor_msgs
+            "brand":   brand,
+            "tag":     tag,
+            "rating":  rating,
+            "comment": comment,
+            "summary": " | ".join(parts)
         })
 
-    print(f"[PROCESS] {len(chat_texts)} chat mesajı AI için hazır")
-    return agent_chats, chat_texts
+    print(f"[PROCESS] {len(chat_texts)} chat AI için hazır")
+    return agent_chats, complaint_chats, chat_texts
 
 # ── AI ────────────────────────────────────────────────────────
-def build_prompt(chat_texts):
-    lines = [f"{i+1}. [{c['brand']}] {c['visitor_msgs']}"
-             for i, c in enumerate(chat_texts)]
+def build_prompt(chat_texts, date_str):
+    lines = [f"{i+1}. {c['summary']}" for i, c in enumerate(chat_texts)]
 
     schema = json.dumps({
-        "categories": [
-            {
-                "name": "Spesifik şikayet/sorun adı — max 6 kelime",
-                "count": 0,
-                "brand_breakdown": [{"brand": "SB", "count": 0}],
-                "short_note": "1 cümle özet"
-            }
-        ],
-        "summary": "max 2 cümle"
+        "categories": [{
+            "name":            "Spesifik şikayet/sorun adı — max 6 kelime",
+            "count":           0,
+            "brand_breakdown": [{"brand": "SB", "count": 0}],
+            "short_note":      "1 cümle somut özet"
+        }],
+        "summary": "max 2 cümle genel değerlendirme"
     }, ensure_ascii=False)
 
-    return f"""Comm100 müşteri destek chat analisti olarak aşağıdaki CS departmanı ziyaretçi mesajlarını analiz et.
+    return f"""Comm100 CS departmanı şikayet analisti olarak aşağıdaki verileri analiz et.
 
-Tarih: {datetime.now().strftime('%d.%m.%Y')} | Toplam: {len(chat_texts)} agent chat
+Tarih: {date_str} | Toplam şikayet/sorun: {len(chat_texts)} chat
 
---- ZİYARETÇİ MESAJLARI ---
+--- VERİLER (brand | tag | rating | yorum | agent) ---
 {chr(10).join(lines)}
 --- ---
 
-KURAL 1 — SADECE ŞİKAYET/SORUN/ÇÖZÜLMEZ TALEPLERİ GRUPLA:
-✅ DAHİL ET: Para çekimi gelmedi, yatırım yansımadı, bonus verilmedi, hesap açılmıyor, teknik sorun, şikayet
-❌ HARIÇ TUT: "Canlı destek var mı?", "bakiye sorgulama", "bahis oranı sorma", genel bilgi soruları
-
-KURAL 2 — KONU ADI SPESİFİK OLMALI:
+KURAL 1 — KONU ADI SPESİFİK OLMALI:
 YANLIŞ: "Çekim Sorunları", "Diğer", "Genel Sorun"
 DOĞRU: "Onaylı Havale Çekimi Hesaba Geçmedi", "Papara Yatırımı Yansımadı", "Bonus Aktivasyon Yapılmıyor"
 
-KURAL 3 — "Diğer" kategorisi YASAK. Her konu kendi spesifik adıyla gruplandırılmalı.
-
+KURAL 2 — Aynı sorunu farklı tag/yorumla ifade edenler TEK kategori altında toplan.
+KURAL 3 — "Diğer" kategorisi YASAK.
 KURAL 4 — brand_breakdown: sadece o konuda hangi brand kaç chat var.
+KURAL 5 — short_note: somut, spesifik, rakam/detay içersin.
 
-GÖREV: Şikayet/sorun içeren mesajları spesifik konulara göre grupla, büyükten küçüğe sırala.
-
+GÖREV: Şikayet/sorunları konulara göre grupla, büyükten küçüğe sırala.
 SB=Superbetin | BS=Betsat | TB=Turkbet
 Sadece JSON döndür:
 {schema}"""
@@ -226,7 +299,7 @@ def try_gemini(prompt):
                 r = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
                     json={
-                        "contents": [{"parts": [{"text": prompt}]}],
+                        "contents":         [{"parts": [{"text": prompt}]}],
                         "generationConfig": {"responseMimeType": "application/json"},
                         "safetySettings": [
                             {"category": "HARM_CATEGORY_HARASSMENT",        "threshold": "BLOCK_NONE"},
@@ -236,16 +309,21 @@ def try_gemini(prompt):
                         ]
                     }, timeout=60
                 )
-                if r.status_code in [429, 503]: break
+                if r.status_code in [429, 503]:
+                    continue
                 if r.status_code == 200:
-                    res = r.json()
+                    res   = r.json()
                     cands = res.get("candidates", [])
                     if cands and cands[0].get("content"):
                         text = cands[0]["content"]["parts"][0]["text"].strip()
                         gemini_key_index = (gemini_key_index + ki + 1) % len(GEMINI_KEYS)
                         model_name = "Gemini 2.5 Flash" if "2.5" in model else "Gemini 2.0 Flash"
-                        print(f"[AI] {model_name} başarılı")
-                        return {"success": True, "text": text, "model": model_name}
+                        in_t  = res.get("usageMetadata", {}).get("promptTokenCount", 0)
+                        out_t = res.get("usageMetadata", {}).get("candidatesTokenCount", 0)
+                        cost  = (in_t * 0.075 / 1_000_000) + (out_t * 0.30 / 1_000_000)
+                        print(f"[AI] {model_name} — {in_t}+{out_t} token | ${cost:.6f}")
+                        return {"success": True, "text": text, "model": model_name,
+                                "in_tokens": in_t, "out_tokens": out_t, "cost": cost}
             except Exception as e:
                 print(f"[GEMINI] {model} key#{ki}: {e}")
     return {"success": False}
@@ -254,18 +332,20 @@ def try_claude(prompt):
     try:
         r = requests.post(
             "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": CLAUDE_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 2000,
-                  "messages": [{"role": "user", "content": prompt}]},
+            headers={"x-api-key": CLAUDE_KEY, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={"model":      "claude-haiku-4-5-20251001",
+                  "max_tokens": 8000,
+                  "messages":   [{"role": "user", "content": prompt}]},
             timeout=60
         )
         if r.status_code == 200:
-            res  = r.json()
-            text = res["content"][0]["text"].strip()
+            res   = r.json()
+            text  = res["content"][0]["text"].strip()
             in_t  = res.get("usage", {}).get("input_tokens", 0)
             out_t = res.get("usage", {}).get("output_tokens", 0)
             cost  = (in_t * 0.25 / 1_000_000) + (out_t * 1.25 / 1_000_000)
-            print(f"[AI] Claude Haiku token: {in_t}+{out_t} | ${cost:.6f}")
+            print(f"[AI] Claude Haiku — {in_t}+{out_t} token | ${cost:.6f}")
             return {"success": True, "text": text, "model": "Claude Haiku 4.5",
                     "in_tokens": in_t, "out_tokens": out_t, "cost": cost}
     except Exception as e:
@@ -278,9 +358,11 @@ def try_groq(prompt):
             r = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": "meta-llama/llama-4-scout-17b-16e-instruct",
-                      "messages": [{"role": "user", "content": prompt}],
-                      "temperature": 0.2, "response_format": {"type": "json_object"}},
+                json={"model":           "meta-llama/llama-4-scout-17b-16e-instruct",
+                      "messages":        [{"role": "user", "content": prompt}],
+                      "max_tokens":      8000,
+                      "temperature":     0.2,
+                      "response_format": {"type": "json_object"}},
                 timeout=60
             )
             if r.status_code == 200:
@@ -289,7 +371,7 @@ def try_groq(prompt):
                 in_t  = res.get("usage", {}).get("prompt_tokens", 0)
                 out_t = res.get("usage", {}).get("completion_tokens", 0)
                 cost  = (in_t * 0.11 / 1_000_000) + (out_t * 0.34 / 1_000_000)
-                print(f"[AI] Groq token: {in_t}+{out_t} | ${cost:.6f}")
+                print(f"[AI] Groq — {in_t}+{out_t} token | ${cost:.6f}")
                 return {"success": True, "text": text, "model": "Groq Llama-4 Scout",
                         "in_tokens": in_t, "out_tokens": out_t, "cost": cost}
         except Exception as e:
@@ -299,21 +381,23 @@ def try_groq(prompt):
 def parse_json(text):
     try:
         return json.loads(text.replace("```json", "").replace("```", "").strip())
-    except:
+    except Exception:
         return None
 
-def analyze_with_ai(chat_texts):
+def analyze_with_ai(chat_texts, date_str):
     if not chat_texts:
         return None, "—", {}
-    prompt = build_prompt(chat_texts)
+    prompt = build_prompt(chat_texts, date_str)
     for fn in [try_gemini, try_claude, try_groq]:
         result = fn(prompt)
         if result["success"]:
             data = parse_json(result["text"])
             if data:
                 data["model_used"] = result["model"]
-                usage = {"model": result["model"], "in_tokens": result.get("in_tokens",0),
-                         "out_tokens": result.get("out_tokens",0), "cost": result.get("cost",0)}
+                usage = {"model":     result["model"],
+                         "in_tokens":  result.get("in_tokens", 0),
+                         "out_tokens": result.get("out_tokens", 0),
+                         "cost":       result.get("cost", 0)}
                 return data, result["model"], usage
     return None, "Hata", {}
 
@@ -324,25 +408,22 @@ def line_color(cnt):
     if cnt >= 2: return "#B28ABF"
     return "#d8b4fe"
 
-def brand_badge(brand, count=None):
+def brand_badge(brand):
     styles = {
         "SB": "background:#1d4ed8;color:#fff;",
         "BS": "background:#FFE600;color:#2F1555;",
         "TB": "background:#E30613;color:#fff;",
     }
     s = styles.get(brand, "background:#666;color:#fff;")
-    badge = f'<span style="display:inline-block;padding:1px 6px;{s}border-radius:3px;font-size:10px;font-weight:700;font-family:Montserrat,Arial,sans-serif;">{brand}</span>'
-    if count is not None:
-        badge += f'<strong style="font-size:12px;color:#662D91;margin-left:3px;font-family:Montserrat,Arial,sans-serif;">{count}</strong>'
-    return badge
+    return f'<span style="display:inline-block;padding:1px 6px;{s}border-radius:3px;font-size:10px;font-weight:700;font-family:Montserrat,Arial,sans-serif;">{brand}</span>'
 
 def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
-    total        = stats["total"]
-    agent_count  = stats["agent_count"]
-    bot_count    = stats["bot_count"]
-    brand_counts = stats["brands"]
+    total          = stats["total"]
+    agent_count    = stats["agent_count"]
+    bot_count      = stats["bot_count"]
+    complaint_count= stats["complaint_count"]
+    brand_counts   = stats["brands"]
 
-    # Brand pill'leri
     brand_html = ""
     for b, cnt in brand_counts.items():
         if cnt:
@@ -356,13 +437,12 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
                 f'</span>'
             )
 
-    # Konu satırları
     topics_html = ""
     if ai_data and ai_data.get("categories"):
         cats = sorted(ai_data["categories"], key=lambda x: x.get("count", 0), reverse=True)
         for idx, cat in enumerate(cats):
-            cnt   = cat.get("count", 0)
-            lclr  = line_color(cnt)
+            cnt    = cat.get("count", 0)
+            lclr   = line_color(cnt)
             border = "none" if idx == len(cats) - 1 else "1px solid #f0e8ff"
 
             bd_html = ""
@@ -411,7 +491,8 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
           <tr><td style="padding-top:14px;">
             <p style="margin:0 0 5px;font-size:10px;font-weight:800;color:#662D91;letter-spacing:.12em;
                text-transform:capitalize;font-family:Montserrat,Arial,sans-serif;">Özet</p>
-            <p style="margin:0;font-size:13px;color:#4b5563;line-height:1.7;font-family:Montserrat,Arial,sans-serif;">{ai_data["summary"]}</p>
+            <p style="margin:0;font-size:13px;color:#4b5563;line-height:1.7;
+               font-family:Montserrat,Arial,sans-serif;">{ai_data["summary"]}</p>
           </td></tr>
         </table>'''
 
@@ -423,18 +504,19 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
 
     no_data_html = '<p style="color:#B28ABF;font-size:13px;font-family:Montserrat,Arial,sans-serif;">Şikayet/sorun tespit edilemedi.</p>'
 
-    # Token / maliyet satırı
     if ai_usage and ai_usage.get("in_tokens"):
         u = ai_usage
         token_line = (
-            f'<p style="margin:5px 0 0;font-size:10px;color:#B28ABF;text-align:center;font-family:Montserrat,Arial,sans-serif;">'
+            f'<p style="margin:5px 0 0;font-size:10px;color:#B28ABF;text-align:center;'
+            f'font-family:Montserrat,Arial,sans-serif;">'
             f'{u["model"]} &nbsp;&middot;&nbsp; '
             f'{u["in_tokens"]:,} input + {u["out_tokens"]:,} output token &nbsp;&middot;&nbsp; '
-            f'${u["cost"]:.6f}'
-            f'</p>'
+            f'${u["cost"]:.6f}</p>'
         )
     else:
         token_line = ""
+
+    complaint_pct = f"{complaint_count/agent_count*100:.1f}%" if agent_count else "—"
 
     return f'''<!DOCTYPE html><html>
 <head><meta charset="UTF-8">
@@ -468,6 +550,8 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
     <span style="font-size:10px;color:#e9d5ff;font-weight:600;font-family:Montserrat,Arial,sans-serif;">Bot: {bot_count}</span>
     <span style="color:rgba(178,138,191,0.4);margin:0 8px;">&middot;</span>
     <span style="font-size:10px;color:#e9d5ff;font-weight:600;font-family:Montserrat,Arial,sans-serif;">Agent: {agent_count}</span>
+    <span style="color:rgba(178,138,191,0.4);margin:0 8px;">&middot;</span>
+    <span style="font-size:10px;color:#FFE600;font-weight:700;font-family:Montserrat,Arial,sans-serif;">Şikayet: {complaint_count} ({complaint_pct})</span>
   </p>
 </td></tr>
 </table>
@@ -485,9 +569,7 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
        letter-spacing:.14em;font-family:Montserrat,Arial,sans-serif;">Şikayet Analizi</td>
     <td style="text-align:right;">{model_badge_html}</td>
   </tr></table>
-
   {'<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-radius:8px;overflow:hidden;">' + topics_html + '</table>' if topics_html else no_data_html}
-
   {summary_html}
 </td></tr>
 </table>
@@ -508,7 +590,8 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
 
 # ── EMAIL ─────────────────────────────────────────────────────
 def send_email(html, date_str, stats):
-    subject = f"CS Şikayet Analizi | {date_str} | {stats['agent_count']} Agent Chat"
+    subject = (f"CS Şikayet Analizi | {date_str} | "
+               f"{stats['agent_count']} Agent | {stats['complaint_count']} Şikayet")
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = GMAIL_USER
@@ -524,46 +607,42 @@ def send_email(html, date_str, stats):
 # ── MAIN ──────────────────────────────────────────────────────
 def main():
     date_str = get_yesterday_sofia()
-    print(f"\n{'='*50}\nPOLIGON CS CHAT ANALYZER — {date_str}\n{'='*50}\n")
+    print(f"\n{'='*55}\nPOLIGON CS CHAT ANALYZER — {date_str}\n{'='*55}\n")
 
-    # 1. CS chatlerini çek
     chats = fetch_cs_chats(date_str)
     if not chats:
         print("[MAIN] CS chat bulunamadı")
         return
 
-    # 2. İstatistikler
-    bot_chats   = [c for c in chats if is_bot_only(c)]
-    agent_chats = [c for c in chats if not is_bot_only(c)]
+    bot_chats    = [c for c in chats if is_bot_only(c)]
+    agent_chats  = [c for c in chats if not is_bot_only(c)]
     brand_counts = {"SB": 0, "BS": 0, "TB": 0}
     for c in agent_chats:
         b = get_brand(c)
         if b in brand_counts:
             brand_counts[b] += 1
 
+    _, complaint_chats, chat_texts = process_chats(chats)
+
     stats = {
-        "total":       len(chats),
-        "agent_count": len(agent_chats),
-        "bot_count":   len(bot_chats),
-        "brands":      brand_counts
+        "total":           len(chats),
+        "agent_count":     len(agent_chats),
+        "bot_count":       len(bot_chats),
+        "complaint_count": len(complaint_chats),
+        "brands":          brand_counts
     }
-    print(f"[STATS] Toplam: {stats['total']} | Agent: {stats['agent_count']} | Bot: {stats['bot_count']}")
-    print(f"[STATS] Brands: {brand_counts}")
+    print(f"[STATS] Toplam:{stats['total']} | Agent:{stats['agent_count']} | "
+          f"Bot:{stats['bot_count']} | Şikayet:{stats['complaint_count']}")
 
-    # 3. Mesajları çek
-    agent_chats_list, chat_texts = process_chats(chats)
-
-    # 4. AI analizi
     ai_data, model_used, ai_usage = None, "—", {}
     if chat_texts:
-        print(f"\n[AI] {len(chat_texts)} chat analiz ediliyor...")
-        ai_data, model_used, ai_usage = analyze_with_ai(chat_texts)
+        print(f"\n[AI] {len(chat_texts)} şikayet analiz ediliyor...")
+        ai_data, model_used, ai_usage = analyze_with_ai(chat_texts, date_str)
         if ai_data:
-            print(f"[AI] {len(ai_data.get('categories', []))} şikayet kategorisi ({model_used})")
+            print(f"[AI] {len(ai_data.get('categories', []))} kategori ({model_used})")
         else:
             print("[AI] Analiz başarısız")
 
-    # 5. Rapor gönder
     html = build_html(ai_data, stats, date_str, model_used, ai_usage)
     send_email(html, date_str, stats)
     print(f"\n[DONE] Tamamlandı — {date_str}")
