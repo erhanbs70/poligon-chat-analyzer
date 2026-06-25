@@ -20,7 +20,7 @@ jobs:
           python-version: '3.11'
 
       - name: Bağımlılıkları kur
-        run: pip install requests pytz
+        run: pip install requests pytz openpyxl
 
       - name: Chat Analyzer çalıştır
         env:
