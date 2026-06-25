@@ -15,9 +15,12 @@ import base64
 import requests
 import smtplib
 import time
+import io
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
 # ── CONFIG ───────────────────────────────────────────────────
 SITE_ID       = os.environ["COMM100_SITE_ID"]
@@ -261,9 +264,17 @@ def build_prompt(chat_texts, date_str):
             "name":            "Spesifik şikayet/sorun adı — max 6 kelime",
             "count":           0,
             "brand_breakdown": [{"brand": "SB", "count": 0}],
-            "short_note":      "1 cümle somut özet"
+            "short_note":      "1 cümle somut özet — rakam/detay içersin"
         }],
-        "summary": "max 2 cümle genel değerlendirme"
+        "critical": [{
+            "username": "kullanıcı adı",
+            "brand":    "SB/BS/TB",
+            "reason":   "Neden kritik — tutar, tehdit veya aciliyet — 1 cümle"
+        }],
+        "action_items": [
+            "Departman + yapılacak aksiyon — 1 cümle"
+        ],
+        "summary": "3-4 cümle genel değerlendirme — dominant sorun, trend, önemli kullanıcı adları"
     }, ensure_ascii=False)
 
     return f"""Comm100 CS departmanı şikayet analisti olarak aşağıdaki verileri analiz et.
@@ -282,6 +293,9 @@ KURAL 2 — Aynı sorunu farklı tag/yorumla ifade edenler TEK kategori altında
 KURAL 3 — "Diğer" kategorisi YASAK.
 KURAL 4 — brand_breakdown: sadece o konuda hangi brand kaç chat var.
 KURAL 5 — short_note: somut, spesifik, rakam/detay içersin.
+KURAL 6 — critical: yüksek tutar (5000 TL+), hesap kapatma/silinme tehdidi, acil çözüm bekleyen, Rating 1 veren kullanıcılar. Yoksa boş liste.
+KURAL 7 — action_items: en az 2, en fazla 5. Her biri "Finans Departmanı: ..." formatında hangi ekip ne yapmalı.
+KURAL 8 — summary: 3-4 cümle. Dominant sorun, brand dağılımı, dikkat çeken trend ve önemli kullanıcı varsa isim yaz.
 
 GÖREV: Şikayet/sorunları konulara göre grupla, büyükten küçüğe sırala.
 SB=Superbetin | BS=Betsat | TB=Turkbet
@@ -502,6 +516,37 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
         f'font-family:Montserrat,Arial,sans-serif;">{model_used}</span>'
     )
 
+    # ── Kritik kullanıcılar ──
+    critical_html = ""
+    if ai_data and ai_data.get("critical"):
+        crits = ai_data["critical"]
+        if crits:
+            rows = ""
+            for u in crits:
+                bt_styles = {"SB": "background:#1d4ed8;color:#fff;",
+                             "BS": "background:#FFE600;color:#2F1555;",
+                             "TB": "background:#E30613;color:#fff;"}
+                bs = bt_styles.get(u.get("brand",""), "background:#666;color:#fff;")
+                rows += (
+                    f'<tr style="border-bottom:1px solid #f0e8ff;"><td style="padding:9px 14px;white-space:nowrap;font-size:13px;font-weight:700;color:#2F1555;font-family:Montserrat,Arial,sans-serif;">{u.get("username","-")}</td><td style="padding:9px 14px;"><span style="display:inline-block;padding:1px 7px;{bs}border-radius:3px;font-size:10px;font-weight:700;">{u.get("brand","-")}</span></td><td style="padding:9px 14px;font-size:12px;color:#662D91;line-height:1.5;font-family:Montserrat,Arial,sans-serif;">{u.get("reason","-")}</td></tr>'
+                )
+            critical_html = (
+                f'<p style="margin:22px 0 10px;font-size:11px;font-weight:800;color:#2F1555;text-transform:uppercase;letter-spacing:.12em;font-family:Montserrat,Arial,sans-serif;">🚨 Kritik Kullanıcılar</p><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-top:3px solid #FFE600;border-radius:0 0 8px 8px;">{rows}</table>'
+            )
+
+    # ── Aksiyon önerileri ──
+    actions_html = ""
+    if ai_data and ai_data.get("action_items"):
+        items = ai_data["action_items"]
+        if items:
+            rows = "".join(
+                f'<table cellpadding="0" cellspacing="0" style="margin-bottom:9px;width:100%;"><tr><td style="vertical-align:top;width:24px;padding-right:10px;"><span style="display:inline-block;width:20px;height:20px;background:#2F1555;color:#FFE600;border-radius:50%;font-size:10px;font-weight:700;text-align:center;line-height:20px;font-family:Montserrat,Arial,sans-serif;">{i+1}</span></td><td style="font-size:13px;color:#4b5563;line-height:1.6;vertical-align:top;font-family:Montserrat,Arial,sans-serif;">{a}</td></tr></table>'
+                for i, a in enumerate(items)
+            )
+            actions_html = (
+                f'<p style="margin:22px 0 10px;font-size:11px;font-weight:800;color:#2F1555;text-transform:uppercase;letter-spacing:.12em;font-family:Montserrat,Arial,sans-serif;">✅ Önerilen Aksiyonlar</p>{rows}'
+            )
+
     no_data_html = '<p style="color:#B28ABF;font-size:13px;font-family:Montserrat,Arial,sans-serif;">Şikayet/sorun tespit edilemedi.</p>'
 
     if ai_usage and ai_usage.get("in_tokens"):
@@ -570,6 +615,8 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
     <td style="text-align:right;">{model_badge_html}</td>
   </tr></table>
   {'<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-radius:8px;overflow:hidden;">' + topics_html + '</table>' if topics_html else no_data_html}
+  {critical_html}
+  {actions_html}
   {summary_html}
 </td></tr>
 </table>
@@ -588,17 +635,126 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
 </td></tr></table>
 </body></html>'''
 
+# ── EXCEL EKİ ────────────────────────────────────────────────
+def build_excel(complaint_chats, date_str):
+    """Şikayet listesini Excel olarak oluştur (openpyxl)."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return None
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"Şikayetler {date_str}"
+
+    # Renkler
+    HDR_BG  = "2F1555"
+    HDR_FG  = "FFE600"
+    ROW_ALT = "F3F0FF"
+    RED_BG  = "F28B82"
+    YLW_BG  = "FBBC04"
+
+    headers = ["#", "Kullanıcı Adı", "Brand", "Agent", "Tag", "Rating", "Yorum", "Tarih", "Chat Linki"]
+    col_widths = [5, 22, 8, 22, 30, 8, 60, 20, 55]
+
+    # Header satırı
+    for ci, (h, w) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.font      = Font(bold=True, color=HDR_FG, name="Calibri", size=10)
+        cell.fill      = PatternFill("solid", fgColor=HDR_BG)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    ws.row_dimensions[1].height = 22
+    ws.freeze_panes = "A2"
+
+    thin = Side(style="thin", color="E0D8F0")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    portal = "https://dash15.lively-chat.com/ui/90005373/livechat/history/chats/transcriptdetail"
+
+    for idx, c in enumerate(complaint_chats, 1):
+        row = idx + 1
+        bg  = ROW_ALT if idx % 2 == 0 else "FFFFFF"
+
+        username = c.get("preChatName") or c.get("name") or c.get("visitorName") or ""
+        brand    = get_brand(c)
+        agent    = get_agent_name(c)
+        tag      = get_tag(c) or "—"
+        rating   = get_rating(c) or ""
+        comment  = get_rating_comment(c)
+        ts       = c.get("startTime") or c.get("start_time") or ""
+        cid      = str(c.get("id") or c.get("chatId") or "")
+        link     = f"{portal}?chatId={cid}" if cid else ""
+
+        # Tarih formatla
+        try:
+            import pytz
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            ts_fmt = dt.astimezone(pytz.timezone("Europe/Sofia")).strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            ts_fmt = ts
+
+        values = [idx, username, brand, agent, tag, rating, comment, ts_fmt, link]
+
+        # Rating'e göre satır rengi
+        if rating == 1:
+            bg = RED_BG
+        elif rating == 2:
+            bg = YLW_BG
+
+        for ci, val in enumerate(values, 1):
+            cell = ws.cell(row=row, column=ci, value=val)
+            cell.fill      = PatternFill("solid", fgColor=bg)
+            cell.font      = Font(name="Calibri", size=9)
+            cell.alignment = Alignment(vertical="center", wrap_text=(ci == 7))
+            cell.border    = border
+            if ci == 9 and val:  # Link sütunu
+                cell.hyperlink = val
+                cell.value     = "Chati Aç"
+                cell.font      = Font(name="Calibri", size=9, color="1155CC", underline="single")
+
+        ws.row_dimensions[row].height = 18
+
+    # Auto-filter
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # ── EMAIL ─────────────────────────────────────────────────────
-def send_email(html, date_str, stats):
+def send_email(html, date_str, stats, complaint_chats=None):
     subject = (f"CS Şikayet Analizi | {date_str} | "
                f"{stats['agent_count']} Agent | {stats['complaint_count']} Şikayet")
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"]    = GMAIL_USER
     msg["To"]      = REPORT_EMAILS[0]
     if len(REPORT_EMAILS) > 1:
         msg["Cc"] = ", ".join(REPORT_EMAILS[1:])
-    msg.attach(MIMEText(html, "html", "utf-8"))
+
+    # HTML body
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(html, "html", "utf-8"))
+    msg.attach(alt)
+
+    # Excel eki
+    if complaint_chats:
+        xlsx_bytes = build_excel(complaint_chats, date_str)
+        if xlsx_bytes:
+            attachment = MIMEBase("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            attachment.set_payload(xlsx_bytes)
+            encoders.encode_base64(attachment)
+            attachment.add_header("Content-Disposition", "attachment",
+                                  filename=f"sikayet_{date_str}.xlsx")
+            msg.attach(attachment)
+            print(f"[EMAIL] Excel eki hazır: {len(xlsx_bytes)//1024}KB")
+
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_USER, GMAIL_PASS)
         server.sendmail(GMAIL_USER, REPORT_EMAILS, msg.as_string())
@@ -644,7 +800,7 @@ def main():
             print("[AI] Analiz başarısız")
 
     html = build_html(ai_data, stats, date_str, model_used, ai_usage)
-    send_email(html, date_str, stats)
+    send_email(html, date_str, stats, complaint_chats=complaint_chats)
     print(f"\n[DONE] Tamamlandı — {date_str}")
 
 if __name__ == "__main__":
