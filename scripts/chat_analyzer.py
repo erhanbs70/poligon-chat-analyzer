@@ -147,6 +147,47 @@ def fetch_cs_chats(date_str):
     print(f"[FETCH] Toplam {len(result)} CS chat çekildi")
     return result
 
+# ── MESAJ FETCH ──────────────────────────────────────────────
+def fetch_messages_batch(chat_ids):
+    """
+    Birden fazla chat için mesajları paralel değil sırayla çek.
+    Her chat için max 5 müşteri mesajı, max 200 karakter.
+    Rate limit: her 10 istekte 0.5s sleep.
+    """
+    auth    = get_auth()
+    results = {}
+    total   = len(chat_ids)
+
+    for i, cid in enumerate(chat_ids):
+        url = (
+            f"https://dash15.lively-chat.com/api/LiveChat/chats/{cid}"
+            f"?siteId={SITE_ID}&include=messages"
+        )
+        try:
+            r = requests.get(url, headers={"Authorization": auth}, timeout=20)
+            if r.status_code == 200:
+                messages = r.json().get("messages", [])
+                visitor_msgs = []
+                for m in messages:
+                    if m.get("senderType") in ("visitor", "Visitor"):
+                        text = (m.get("message") or m.get("body") or "").strip()
+                        if text and len(text) > 5:
+                            visitor_msgs.append(text[:200])
+                    if len(visitor_msgs) >= 5:
+                        break
+                results[cid] = " | ".join(visitor_msgs)
+        except Exception:
+            results[cid] = ""
+
+        if (i + 1) % 10 == 0:
+            time.sleep(0.5)
+        if (i + 1) % 100 == 0:
+            print(f"[MSG] {i+1}/{total} mesaj çekildi...")
+
+    print(f"[MSG] Toplam {len(results)} chat mesajı çekildi")
+    return results
+
+
 # ── HELPERS ──────────────────────────────────────────────────
 def get_agent_name(chat):
     agents = chat.get("chatAgents", [])
@@ -200,12 +241,26 @@ def get_rating_comment(chat):
     s = chat.get("postChatSurvey") or {}
     return (s.get("ratingComment") or "").strip()
 
-def is_complaint_chat(chat):
+# Şikayet/hoşnutsuzluk sinyal kelimeleri — mesaj içeriği için
+COMPLAINT_KEYWORDS = [
+    "şikayet", "mağdur", "dolandırıcı", "sahtekâr", "rezalet", "berbat",
+    "korkunç", "çok kötü", "iğrenç", "skandal", "mahkeme", "avukat",
+    "btcm", "şikayetvar", "sikayetvar", "twitter", "sosyal medya",
+    "hesabımı kapat", "hesabı sil", "üyeliğimi iptal",
+    "paranı ver", "paramı ver", "param nerede", "param kayboldu",
+    "yatırım gelmedi", "yatırım yok", "para yok", "çekim gelmiyor",
+    "çekim yok", "para çıkmıyor", "ödeme yok", "ödeme gelmiyor",
+    "hile", "hileli", "manipüle", "oyun hileliydi",
+    "küfür", "hakaret", "terbiyesiz", "saygısız",
+]
+
+def is_complaint_chat(chat, visitor_msgs=""):
     """
     Şikayet/sorun göstergesi:
     1. Rating 1 veya 2
     2. QA tag'li (deposit_issue, game_fairness vb.)
-    3. Rating comment varsa
+    3. Rating comment 30+ karakter
+    4. Mesaj içeriğinde şikayet sinyal kelimesi (tag bağımsız)
     """
     rating  = get_rating(chat)
     tag     = get_tag(chat).lower()
@@ -215,44 +270,77 @@ def is_complaint_chat(chat):
         return True
     if any(qa in tag for qa in QA_TAGS):
         return True
-    # Yorum varsa ama çok kısa değilse (30+ karakter = gerçek şikayet)
     if comment and len(comment) > 30:
         return True
+    # Mesaj içeriğinde şikayet sinyali
+    if visitor_msgs:
+        msgs_lower = visitor_msgs.lower()
+        if any(kw in msgs_lower for kw in COMPLAINT_KEYWORDS):
+            return True
     return False
 
 # ── PROCESS ──────────────────────────────────────────────────
 def process_chats(chats):
     """
     Şikayet içeren chatleri tespit et.
-    Mesaj API çağrısı YOK — tag + rating zaten mevcut.
+    1. Önce tag+rating+comment ile hızlı filtre
+    2. Kalanlar için mesaj içeriğini çek, şikayet sinyal kelimesi ara
     """
-    agent_chats     = [c for c in chats if not is_bot_only(c)]
-    complaint_chats = [c for c in agent_chats if is_complaint_chat(c)]
+    agent_chats = [c for c in chats if not is_bot_only(c)]
+    print(f"[PROCESS] {len(chats)} CS chat → {len(agent_chats)} agent chat")
 
-    print(f"[PROCESS] {len(chats)} CS chat → {len(agent_chats)} agent → {len(complaint_chats)} şikayet")
+    # İlk geçiş — mesaj olmadan hızlı filtre (tag+rating+comment)
+    quick_complaints = set()
+    remaining_ids    = []
+    for c in agent_chats:
+        cid = str(c.get("id") or c.get("chatId") or "")
+        if is_complaint_chat(c, ""):
+            quick_complaints.add(cid)
+        else:
+            remaining_ids.append(cid)
+
+    print(f"[PROCESS] Hızlı filtre: {len(quick_complaints)} şikayet, {len(remaining_ids)} mesaj kontrolü bekliyor")
+
+    # İkinci geçiş — kalan chatler için mesaj içeriğini çek
+    msg_map = {}
+    if remaining_ids:
+        print(f"[MSG] {len(remaining_ids)} chat için mesajlar çekiliyor...")
+        msg_map = fetch_messages_batch(remaining_ids)
+
+    # Tüm chatleri değerlendir
+    complaint_chats = []
+    for c in agent_chats:
+        cid          = str(c.get("id") or c.get("chatId") or "")
+        visitor_msgs = msg_map.get(cid, "")
+        if cid in quick_complaints or is_complaint_chat(c, visitor_msgs):
+            c["_visitor_msgs"] = visitor_msgs  # AI için sakla
+            complaint_chats.append(c)
+
+    print(f"[PROCESS] Toplam {len(complaint_chats)} şikayet tespit edildi")
 
     # AI için chat özetleri oluştur
     chat_texts = []
     for c in complaint_chats:
-        brand   = get_brand(c)
-        tag     = get_tag(c) or "—"
-        rating  = get_rating(c)
-        comment = get_rating_comment(c)
-        agent   = get_agent_name(c)
+        brand        = get_brand(c)
+        tag          = get_tag(c) or "—"
+        rating       = get_rating(c)
+        comment      = get_rating_comment(c)
+        visitor_msgs = c.get("_visitor_msgs", "")
 
-        # AI'a gönderilecek özet satır
         parts = [f"[{brand}]", f"Tag:{tag}"]
         if rating:
             parts.append(f"Rating:{rating}")
         if comment:
             parts.append(f"Yorum:{comment[:120]}")
-        # Agent bilgisi kasıtlı çıkarıldı — AI müşteri ile karıştırıyor
+        elif visitor_msgs:
+            # Rating comment yoksa mesaj içeriğinden özet al
+            parts.append(f"Mesaj:{visitor_msgs[:150]}")
 
         chat_texts.append({
             "brand":   brand,
             "tag":     tag,
             "rating":  rating,
-            "comment": comment,
+            "comment": comment or visitor_msgs[:120],
             "summary": " | ".join(parts)
         })
 
