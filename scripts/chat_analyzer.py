@@ -42,10 +42,14 @@ CAMPAIGNS = {
 }
 
 # QA tag'leri — bu tag'leri taşıyan chatler şikayet/sorun içerir
+# Gerçek şikayet/sorun tag'leri — bilgi talebi olanlar çıkarıldı
+# betting_rules_query ve deposit_query bilgi talebi, şikayet değil
+# casino_cashback_query ve sport_cashback_query da çoğunlukla soru, ama bazen şikayet içerir
 QA_TAGS = [
-    "game_fairness", "ac_closure_request", "casino_cashback_query",
-    "sport_cashback_query", "deposit_issue", "deposit_missing",
-    "betting_rules_query", "deposit_query"
+    "game_fairness",
+    "ac_closure_request",
+    "deposit_issue",
+    "deposit_missing",
 ]
 
 gemini_key_index = 0
@@ -211,7 +215,8 @@ def is_complaint_chat(chat):
         return True
     if any(qa in tag for qa in QA_TAGS):
         return True
-    if comment and len(comment) > 10:
+    # Yorum varsa ama çok kısa değilse (30+ karakter = gerçek şikayet)
+    if comment and len(comment) > 30:
         return True
     return False
 
@@ -290,8 +295,17 @@ KURAL 2 — Aynı sorunu farklı tag/yorumla ifade edenler TEK kategori altında
 KURAL 3 — "Diğer" kategorisi YASAK.
 KURAL 4 — brand_breakdown: sadece o konuda hangi brand kaç chat var.
 KURAL 5 — short_note: somut, spesifik, rakam/detay içersin.
-KURAL 6 — critical: yüksek tutar (5000 TL+), hesap kapatma/silinme tehdidi, acil çözüm bekleyen, Rating 1 veren MÜŞTERİLER. username alanına ŞİKAYET EDEN MÜŞTERİNİN adını yaz, CS temsilcisi adını ASLA yazma. Yoksa boş liste.
-KURAL 7 — summary: 3-4 cümle. Dominant sorun, brand dağılımı, dikkat çeken trend ve önemli kullanıcı varsa isim yaz.
+KURAL 6 — critical: SADECE şu 3 durumdan biri varsa ekle:
+  a) 5000 TL+ tutar kaybı/çekim sorunu belirtilmişse
+  b) Hesap silme/kapatma tehdidi + Rating 1 birlikte varsa
+  c) Açık tehdit veya hukuki süreç başlatacağını belirten mesaj varsa
+  Genel "memnun değilim" veya sadece Rating 1 olan KRİTİK DEĞİLDİR.
+  username = ŞİKAYET EDEN MÜŞTERİ adı. CS temsilcisi adını ASLA yazma.
+  Kritik yoksa boş liste döndür: "critical": []
+KURAL 7 — summary: 3-4 cümle. Dominant sorun, brand dağılımı, dikkat çeken trend.
+  ÖNEMLİ: Özette CS temsilcisi adlarını (agent) ASLA kullanıcı gibi gösterme.
+  "X temsilcisi müşterilere küfür etti" gibi ifadeler YANLIŞTIR — veriler müşteri şikayetleridir, temsilci davranışı değil.
+  Eğer küfür/hakaret içeren yorumlar varsa "bazı müşteriler sert dil kullandı" şeklinde yaz.
 
 GÖREV: Şikayet/sorunları konulara göre grupla, büyükten küçüğe sırala.
 SB=Superbetin | BS=Betsat | TB=Turkbet
