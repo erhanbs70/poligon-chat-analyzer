@@ -241,8 +241,7 @@ def process_chats(chats):
             parts.append(f"Rating:{rating}")
         if comment:
             parts.append(f"Yorum:{comment[:120]}")
-        if agent:
-            parts.append(f"Agent:{agent}")
+        # Agent bilgisi kasıtlı çıkarıldı — AI müşteri ile karıştırıyor
 
         chat_texts.append({
             "brand":   brand,
@@ -281,7 +280,8 @@ def build_prompt(chat_texts, date_str):
 
 Tarih: {date_str} | Toplam şikayet/sorun: {len(chat_texts)} chat
 
---- VERİLER (brand | tag | rating | yorum | agent) ---
+--- VERİLER (brand | tag | rating | kullanıcı yorumu) ---
+NOT: Verilerdeki isimler ŞİKAYET EDEN MÜŞTERİ adlarıdır, CS temsilcisi değil.
 {chr(10).join(lines)}
 --- ---
 
@@ -293,7 +293,7 @@ KURAL 2 — Aynı sorunu farklı tag/yorumla ifade edenler TEK kategori altında
 KURAL 3 — "Diğer" kategorisi YASAK.
 KURAL 4 — brand_breakdown: sadece o konuda hangi brand kaç chat var.
 KURAL 5 — short_note: somut, spesifik, rakam/detay içersin.
-KURAL 6 — critical: yüksek tutar (5000 TL+), hesap kapatma/silinme tehdidi, acil çözüm bekleyen, Rating 1 veren kullanıcılar. Yoksa boş liste.
+KURAL 6 — critical: yüksek tutar (5000 TL+), hesap kapatma/silinme tehdidi, acil çözüm bekleyen, Rating 1 veren MÜŞTERİLER. username alanına ŞİKAYET EDEN MÜŞTERİNİN adını yaz, CS temsilcisi adını ASLA yazma. Yoksa boş liste.
 KURAL 7 — action_items: en az 2, en fazla 5. Her biri "Finans Departmanı: ..." formatında hangi ekip ne yapmalı.
 KURAL 8 — summary: 3-4 cümle. Dominant sorun, brand dağılımı, dikkat çeken trend ve önemli kullanıcı varsa isim yaz.
 
