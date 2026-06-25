@@ -134,7 +134,25 @@ def fetch_cs_chats(date_str):
                     if in_sofia_range(c.get("startTime") or c.get("start_time"), date_str):
                         result.append(c)
 
-            print(f"[FETCH] Sayfa {page}: {len(chats)} chat ({len(result)} toplam)")
+            page_in  = sum(1 for c in chats if in_sofia_range(
+                c.get("startTime") or c.get("start_time"), date_str))
+            page_out = 0
+            for c in chats:
+                ts = c.get("startTime") or c.get("start_time") or ""
+                if ts and not in_sofia_range(ts, date_str):
+                    try:
+                        import pytz as _ptz
+                        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        if dt.astimezone(_ptz.timezone("Europe/Sofia")).strftime("%Y-%m-%d") > date_str:
+                            page_out += 1
+                    except Exception:
+                        pass
+
+            print(f"[FETCH] Sayfa {page}: {len(chats)} chat | bugun:{page_in} dis:{page_out} ({len(result)} toplam)")
+
+            if page_out > 0 and page_in == 0:
+                print("[FETCH] Hedef tarih geçildi, durduruluyor.")
+                break
             if len(chats) < 500:
                 break
             page += 1
@@ -243,15 +261,39 @@ def get_rating_comment(chat):
 
 # Şikayet/hoşnutsuzluk sinyal kelimeleri — mesaj içeriği için
 COMPLAINT_KEYWORDS = [
+    # Finansal sorunlar
     "şikayet", "mağdur", "dolandırıcı", "sahtekâr", "rezalet", "berbat",
     "korkunç", "çok kötü", "iğrenç", "skandal", "mahkeme", "avukat",
-    "btcm", "şikayetvar", "sikayetvar", "twitter", "sosyal medya",
-    "hesabımı kapat", "hesabı sil", "üyeliğimi iptal",
     "paranı ver", "paramı ver", "param nerede", "param kayboldu",
-    "yatırım gelmedi", "yatırım yok", "para yok", "çekim gelmiyor",
-    "çekim yok", "para çıkmıyor", "ödeme yok", "ödeme gelmiyor",
-    "hile", "hileli", "manipüle", "oyun hileliydi",
+    "yatırım gelmedi", "yatırım yok", "para yok", "para gelmiyor",
+    "çekim gelmiyor", "çekim yok", "para çıkmıyor", "ödeme yok",
+    "ödeme gelmiyor", "ödeme yapılmadı", "hesaba geçmedi", "yansımadı",
+    "hile", "hileli", "manipüle", "oyun hileliydi", "kazandım ama",
+    # Hesap/erişim sorunları
+    "açılmıyor", "açılmıyo", "girilmiyor", "giremiyorum", "giriş yapamıyorum",
+    "donuyor", "dondu", "takıldı", "takılıyor", "kasıyor", "kasılıyor",
+    "yavaş", "çok yavaş", "site yavaş", "uygulama yavaş",
+    "çöküyor", "çöktü", "kapanıyor", "kapandı", "hata veriyor",
+    "hata aldım", "error", "bağlanamıyorum", "bağlantı yok",
+    "giriş yapamıyorum", "şifre çalışmıyor", "sms gelmiyor",
+    "doğrulama gelmiyor", "kod gelmiyor",
+    # Genel hoşnutsuzluk
+    "neden hâlâ", "neden hala", "hala çözülmedi", "çözülmedi",
+    "çözüm yok", "ilgilenmiyor", "ilgilenilmiyor", "cevap yok",
+    "cevap vermedi", "cevap verilmiyor", "bekletiyorsunuz",
+    "saatlerdir", "günlerdir", "haftadır", "bekliyorum",
+    "mağdur ettiniz", "zarar gördüm", "zarar ettim",
+    "yanlış hesaplandı", "hatalı", "eksik yatırıldı",
+    "bonus verilmedi", "bonus gelmedi", "bonus yok",
+    "sinir bozucu", "berbat site", "kötü site", "rezil",
+    # Tehdit / sosyal medya
+    "şikayetvar", "sikayetvar", "twitter", "sosyal medya",
+    "btcm", "şikayet edeceğim", "şikayet açacağım",
+    "mahkemeye vereceğim", "avukata vereceğim",
+    "hesabımı kapat", "hesabı sil", "üyeliğimi iptal",
+    # Küfür/hakaret (içerik ne olursa olsun kritik)
     "küfür", "hakaret", "terbiyesiz", "saygısız",
+    "orospu", "siktir", "amk", "bok", "göt", "piç",
 ]
 
 def is_complaint_chat(chat, visitor_msgs=""):
@@ -327,21 +369,24 @@ def process_chats(chats):
         comment      = get_rating_comment(c)
         visitor_msgs = c.get("_visitor_msgs", "")
 
-        parts = [f"[{brand}]", f"Tag:{tag}"]
+        visitor = (c.get("preChatName") or c.get("name") or
+                   c.get("visitorName") or c.get("visitor_name") or "—")
+
+        parts = [f"Uye:{visitor}", f"[{brand}]", f"Tag:{tag}"]
         if rating:
             parts.append(f"Rating:{rating}")
         if comment:
             parts.append(f"Yorum:{comment[:120]}")
         elif visitor_msgs:
-            # Rating comment yoksa mesaj içeriğinden özet al
             parts.append(f"Mesaj:{visitor_msgs[:150]}")
 
         chat_texts.append({
-            "brand":   brand,
-            "tag":     tag,
-            "rating":  rating,
-            "comment": comment or visitor_msgs[:120],
-            "summary": " | ".join(parts)
+            "brand":    brand,
+            "tag":      tag,
+            "rating":   rating,
+            "username": visitor,
+            "comment":  comment or visitor_msgs[:120],
+            "summary":  " | ".join(parts)
         })
 
     print(f"[PROCESS] {len(chat_texts)} chat AI için hazır")
@@ -359,7 +404,7 @@ def build_prompt(chat_texts, date_str):
             "short_note":      "1 cümle somut özet — rakam/detay içersin"
         }],
         "critical": [{
-            "username": "kullanıcı adı",
+            "username": "satır başındaki Uye:XXX değeri — TAM kopyala",
             "brand":    "SB/BS/TB",
             "reason":   "Neden kritik — tutar, tehdit veya aciliyet — 1 cümle"
         }],
@@ -370,8 +415,9 @@ def build_prompt(chat_texts, date_str):
 
 Tarih: {date_str} | Toplam şikayet/sorun: {len(chat_texts)} chat
 
---- VERİLER (brand | tag | rating | kullanıcı yorumu) ---
-NOT: Verilerdeki isimler ŞİKAYET EDEN MÜŞTERİ adlarıdır, CS temsilcisi değil.
+--- VERİLER (Uye:KULLANICI_ADI | brand | tag | rating | yorum/mesaj) ---
+NOT: "Uye:" ile başlayan isimler ŞİKAYET EDEN MÜŞTERİ kullanıcı adlarıdır.
+CS temsilcisi adları bu veride YOKTUR.
 {chr(10).join(lines)}
 --- ---
 
@@ -386,10 +432,10 @@ KURAL 5 — short_note: somut, spesifik, rakam/detay içersin.
 KURAL 6 — critical: SADECE şu 3 durumdan biri varsa ekle:
   a) 5000 TL+ tutar kaybı/çekim sorunu belirtilmişse
   b) Hesap silme/kapatma tehdidi + Rating 1 birlikte varsa
-  c) Açık tehdit veya hukuki süreç başlatacağını belirten mesaj varsa
+  c) Açık tehdit, ölüm tehdidi veya hukuki süreç başlatacağını belirten mesaj varsa
   Genel "memnun değilim" veya sadece Rating 1 olan KRİTİK DEĞİLDİR.
-  username = ŞİKAYET EDEN MÜŞTERİ adı. CS temsilcisi adını ASLA yazma.
-  Kritik yoksa boş liste döndür: "critical": []
+  username = satır başındaki "Uye:XXX" kısmındaki XXX değeri — TAM OLARAK kopyala.
+  CS temsilcisi adını ASLA yazma. Kritik yoksa boş liste: "critical": []
 KURAL 7 — summary: 3-4 cümle. Dominant sorun, brand dağılımı, dikkat çeken trend.
   ÖNEMLİ: Özette CS temsilcisi adlarını (agent) ASLA kullanıcı gibi gösterme.
   "X temsilcisi müşterilere küfür etti" gibi ifadeler YANLIŞTIR — veriler müşteri şikayetleridir, temsilci davranışı değil.
