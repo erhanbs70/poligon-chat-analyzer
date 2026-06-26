@@ -291,8 +291,8 @@ def fetch_all_chats(date_str):
             if not chats:
                 break
 
-            page_in  = 0
-            page_out = 0
+            page_in    = 0
+            page_after = 0  # hedef tarihten SONRA olan chatler
             for c in chats:
                 cid = str(c.get("id") or c.get("chatId") or "")
                 ts  = c.get("startTime") or c.get("start_time") or ""
@@ -303,18 +303,20 @@ def fetch_all_chats(date_str):
                     result.append(c)
                     page_in += 1
                 elif ts:
-                    # Sonraki güne geçtik mi kontrol et
                     try:
                         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                        if dt.astimezone(_target_tz).strftime("%Y-%m-%d") > date_str:
-                            page_out += 1
+                        chat_date = dt.astimezone(_target_tz).strftime("%Y-%m-%d")
+                        if chat_date > date_str:
+                            page_after += 1
+                        # chat_date < date_str onceki gun, normal, saymiyoruz
                     except Exception:
                         pass
 
-            print(f"[FETCH] Sayfa {page}: {len(chats)} chat | bugun:{page_in} dis:{page_out} ({len(result)} toplam)")
+            print(f"[FETCH] Sayfa {page}: {len(chats)} chat | bugun:{page_in} sonraki:{page_after} ({len(result)} toplam)")
 
-            # Sayfanin tamami hedef tarih sonrasindaysa dur
-            if page_out > 0 and page_in == 0:
+            # Sadece hedef tarihten SONRA gelen chatler varsa ve bugün yok ise dur
+            # len(result) > 0 sarti: hic bugun chat bulamadan durmasın
+            if page_after > 0 and page_in == 0 and len(result) > 0:
                 print("[FETCH] Hedef tarih geçildi, durduruluyor.")
                 break
             if len(chats) < 500:
