@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 # ============================================================
-# POLIGON COMM100 CHAT ANALYZER — v4
-# fix: mesaj API çağrısı kaldırıldı (timeout'a yol açıyordu)
-# fix: departmentId query string'e taşındı
-# fix: Claude max_tokens 8000, Groq max_tokens eklendi
-# Şikayet tespiti: rating 1-2 + QA tag'li chatler
-# (zaten search API'den gelen veriler yeterli, ayrı mesaj çağrısı yok)
+# POLIGON COMM100 CHAT ANALYZER — v5
+# fix: sortOrder=desc + hedef tarih geçme mantığı düzeltildi
 # ============================================================
 
 import os
@@ -41,10 +37,6 @@ CAMPAIGNS = {
     "TB": "6712311a-2268-408c-a803-b338a1308010"
 }
 
-# QA tag'leri — bu tag'leri taşıyan chatler şikayet/sorun içerir
-# Gerçek şikayet/sorun tag'leri — bilgi talebi olanlar çıkarıldı
-# betting_rules_query ve deposit_query bilgi talebi, şikayet değil
-# casino_cashback_query ve sport_cashback_query da çoğunlukla soru, ama bazen şikayet içerir
 QA_TAGS = [
     "game_fairness",
     "ac_closure_request",
@@ -89,17 +81,16 @@ def in_sofia_range(ts_str, date_str):
 # ── COMM100 FETCH ─────────────────────────────────────────────
 def fetch_cs_chats(date_str):
     """
-    CS departmanı chatlerini çek.
-    departmentId query string'de — POST body filtresi çalışmıyor.
-    include=chatWrapup: tag bilgisi için
-    include=postChatSurvey: rating bilgisi için
-    include=messages YOK — ayrı API çağrısına gerek yok
+    desc sırayla çek (en yeni önce).
+    Bugün (sonra) → dün (hedef) → önceki günler (önce/dur).
     """
+    import pytz
     start_time, end_time = sofia_to_utc_range(date_str)
     auth     = get_auth()
     result   = []
     seen_ids = set()
     page     = 1
+    sofia_tz = pytz.timezone("Europe/Sofia")
 
     print(f"[FETCH] CS chatleri çekiliyor: {date_str}")
 
@@ -109,7 +100,7 @@ def fetch_cs_chats(date_str):
             f"?siteId={SITE_ID}"
             f"&pageIndex={page}&pageSize=500"
             f"&include=chatAgent&include=chatWrapup&include=postChatSurvey"
-            f"&sortBy=startTime&sortOrder=asc"
+            f"&sortBy=startTime&sortOrder=desc"
             f"&departmentId={CS_DEPT_ID}"
         )
         try:
@@ -127,34 +118,48 @@ def fetch_cs_chats(date_str):
             if not chats:
                 break
 
+            page_in     = 0  # hedef tarih
+            page_after  = 0  # hedef tarihten SONRA (henüz gelmedik)
+            page_before = 0  # hedef tarihten ÖNCE (geçtik, dur)
+
             for c in chats:
                 cid = str(c.get("id") or c.get("chatId") or "")
-                if cid and cid not in seen_ids:
-                    seen_ids.add(cid)
-                    if in_sofia_range(c.get("startTime") or c.get("start_time"), date_str):
-                        result.append(c)
+                ts  = c.get("startTime") or c.get("start_time") or ""
 
-            page_in  = sum(1 for c in chats if in_sofia_range(
-                c.get("startTime") or c.get("start_time"), date_str))
-            page_out = 0
-            for c in chats:
-                ts = c.get("startTime") or c.get("start_time") or ""
-                if ts and not in_sofia_range(ts, date_str):
+                sofia_date = None
+                if ts:
                     try:
-                        import pytz as _ptz
                         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                        if dt.astimezone(_ptz.timezone("Europe/Sofia")).strftime("%Y-%m-%d") > date_str:
-                            page_out += 1
+                        sofia_date = dt.astimezone(sofia_tz).strftime("%Y-%m-%d")
                     except Exception:
                         pass
 
-            print(f"[FETCH] Sayfa {page}: {len(chats)} chat | bugun:{page_in} dis:{page_out} ({len(result)} toplam)")
+                if sofia_date == date_str:
+                    page_in += 1
+                elif sofia_date and sofia_date > date_str:
+                    page_after += 1
+                elif sofia_date and sofia_date < date_str:
+                    page_before += 1
 
-            if page_out > 0 and page_in == 0:
+                if cid and cid not in seen_ids:
+                    seen_ids.add(cid)
+                    if not sofia_date or sofia_date == date_str:
+                        result.append(c)
+
+            print(f"[FETCH] Sayfa {page}: {len(chats)} chat | "
+                  f"hedef:{page_in} sonra:{page_after} once:{page_before} ({len(result)} toplam)")
+
+            # desc sıralamada:
+            # sonra>0 ve hedef=0 → henüz dünün chatlerine gelmedik, devam
+            # hedef>0            → dünün chatlerini buluyoruz, devam
+            # once>0 ve hedef=0 → dünü geçtik, dur
+            if page_before > 0 and page_in == 0:
                 print("[FETCH] Hedef tarih geçildi, durduruluyor.")
                 break
+
             if len(chats) < 500:
                 break
+
             page += 1
             time.sleep(0.3)
 
@@ -167,11 +172,6 @@ def fetch_cs_chats(date_str):
 
 # ── MESAJ FETCH ──────────────────────────────────────────────
 def fetch_messages_batch(chat_ids):
-    """
-    Birden fazla chat için mesajları paralel değil sırayla çek.
-    Her chat için max 5 müşteri mesajı, max 200 karakter.
-    Rate limit: her 10 istekte 0.5s sleep.
-    """
     auth    = get_auth()
     results = {}
     total   = len(chat_ids)
@@ -205,7 +205,6 @@ def fetch_messages_batch(chat_ids):
     print(f"[MSG] Toplam {len(results)} chat mesajı çekildi")
     return results
 
-
 # ── HELPERS ──────────────────────────────────────────────────
 def get_agent_name(chat):
     agents = chat.get("chatAgents", [])
@@ -232,7 +231,6 @@ def is_bot_only(chat):
     return chat.get("chatType") == "chatBotOnly"
 
 def get_tag(chat):
-    """chatWrapup.categoriesName'den ana tag'i çıkar."""
     import re
     cat = (chat.get("chatWrapup") or {}).get("categoriesName") or ""
     if not cat:
@@ -259,9 +257,7 @@ def get_rating_comment(chat):
     s = chat.get("postChatSurvey") or {}
     return (s.get("ratingComment") or "").strip()
 
-# Şikayet/hoşnutsuzluk sinyal kelimeleri — mesaj içeriği için
 COMPLAINT_KEYWORDS = [
-    # Finansal sorunlar
     "şikayet", "mağdur", "dolandırıcı", "sahtekâr", "rezalet", "berbat",
     "korkunç", "çok kötü", "iğrenç", "skandal", "mahkeme", "avukat",
     "paranı ver", "paramı ver", "param nerede", "param kayboldu",
@@ -269,7 +265,6 @@ COMPLAINT_KEYWORDS = [
     "çekim gelmiyor", "çekim yok", "para çıkmıyor", "ödeme yok",
     "ödeme gelmiyor", "ödeme yapılmadı", "hesaba geçmedi", "yansımadı",
     "hile", "hileli", "manipüle", "oyun hileliydi", "kazandım ama",
-    # Hesap/erişim sorunları
     "açılmıyor", "açılmıyo", "girilmiyor", "giremiyorum", "giriş yapamıyorum",
     "donuyor", "dondu", "takıldı", "takılıyor", "kasıyor", "kasılıyor",
     "yavaş", "çok yavaş", "site yavaş", "uygulama yavaş",
@@ -277,7 +272,6 @@ COMPLAINT_KEYWORDS = [
     "hata aldım", "error", "bağlanamıyorum", "bağlantı yok",
     "giriş yapamıyorum", "şifre çalışmıyor", "sms gelmiyor",
     "doğrulama gelmiyor", "kod gelmiyor",
-    # Genel hoşnutsuzluk
     "neden hâlâ", "neden hala", "hala çözülmedi", "çözülmedi",
     "çözüm yok", "ilgilenmiyor", "ilgilenilmiyor", "cevap yok",
     "cevap vermedi", "cevap verilmiyor", "bekletiyorsunuz",
@@ -286,24 +280,15 @@ COMPLAINT_KEYWORDS = [
     "yanlış hesaplandı", "hatalı", "eksik yatırıldı",
     "bonus verilmedi", "bonus gelmedi", "bonus yok",
     "sinir bozucu", "berbat site", "kötü site", "rezil",
-    # Tehdit / sosyal medya
     "şikayetvar", "sikayetvar", "twitter", "sosyal medya",
     "btcm", "şikayet edeceğim", "şikayet açacağım",
     "mahkemeye vereceğim", "avukata vereceğim",
     "hesabımı kapat", "hesabı sil", "üyeliğimi iptal",
-    # Küfür/hakaret (içerik ne olursa olsun kritik)
     "küfür", "hakaret", "terbiyesiz", "saygısız",
     "orospu", "siktir", "amk", "bok", "göt", "piç",
 ]
 
 def is_complaint_chat(chat, visitor_msgs=""):
-    """
-    Şikayet/sorun göstergesi:
-    1. Rating 1 veya 2
-    2. QA tag'li (deposit_issue, game_fairness vb.)
-    3. Rating comment 30+ karakter
-    4. Mesaj içeriğinde şikayet sinyal kelimesi (tag bağımsız)
-    """
     rating  = get_rating(chat)
     tag     = get_tag(chat).lower()
     comment = get_rating_comment(chat)
@@ -314,7 +299,6 @@ def is_complaint_chat(chat, visitor_msgs=""):
         return True
     if comment and len(comment) > 30:
         return True
-    # Mesaj içeriğinde şikayet sinyali
     if visitor_msgs:
         msgs_lower = visitor_msgs.lower()
         if any(kw in msgs_lower for kw in COMPLAINT_KEYWORDS):
@@ -323,15 +307,9 @@ def is_complaint_chat(chat, visitor_msgs=""):
 
 # ── PROCESS ──────────────────────────────────────────────────
 def process_chats(chats):
-    """
-    Şikayet içeren chatleri tespit et.
-    1. Önce tag+rating+comment ile hızlı filtre
-    2. Kalanlar için mesaj içeriğini çek, şikayet sinyal kelimesi ara
-    """
     agent_chats = [c for c in chats if not is_bot_only(c)]
     print(f"[PROCESS] {len(chats)} CS chat → {len(agent_chats)} agent chat")
 
-    # İlk geçiş — mesaj olmadan hızlı filtre (tag+rating+comment)
     quick_complaints = set()
     remaining_ids    = []
     for c in agent_chats:
@@ -343,24 +321,21 @@ def process_chats(chats):
 
     print(f"[PROCESS] Hızlı filtre: {len(quick_complaints)} şikayet, {len(remaining_ids)} mesaj kontrolü bekliyor")
 
-    # İkinci geçiş — kalan chatler için mesaj içeriğini çek
     msg_map = {}
     if remaining_ids:
         print(f"[MSG] {len(remaining_ids)} chat için mesajlar çekiliyor...")
         msg_map = fetch_messages_batch(remaining_ids)
 
-    # Tüm chatleri değerlendir
     complaint_chats = []
     for c in agent_chats:
         cid          = str(c.get("id") or c.get("chatId") or "")
         visitor_msgs = msg_map.get(cid, "")
         if cid in quick_complaints or is_complaint_chat(c, visitor_msgs):
-            c["_visitor_msgs"] = visitor_msgs  # AI için sakla
+            c["_visitor_msgs"] = visitor_msgs
             complaint_chats.append(c)
 
     print(f"[PROCESS] Toplam {len(complaint_chats)} şikayet tespit edildi")
 
-    # AI için chat özetleri oluştur
     chat_texts = []
     for c in complaint_chats:
         brand        = get_brand(c)
@@ -438,7 +413,6 @@ KURAL 6 — critical: SADECE şu 3 durumdan biri varsa ekle:
   CS temsilcisi adını ASLA yazma. Kritik yoksa boş liste: "critical": []
 KURAL 7 — summary: 3-4 cümle. Dominant sorun, brand dağılımı, dikkat çeken trend.
   ÖNEMLİ: Özette CS temsilcisi adlarını (agent) ASLA kullanıcı gibi gösterme.
-  "X temsilcisi müşterilere küfür etti" gibi ifadeler YANLIŞTIR — veriler müşteri şikayetleridir, temsilci davranışı değil.
   Eğer küfür/hakaret içeren yorumlar varsa "bazı müşteriler sert dil kullandı" şeklinde yaz.
 
 GÖREV: Şikayet/sorunları konulara göre grupla, büyükten küçüğe sırala.
@@ -576,11 +550,11 @@ def brand_badge(brand):
     return f'<span style="display:inline-block;padding:1px 6px;{s}border-radius:3px;font-size:10px;font-weight:700;font-family:Montserrat,Arial,sans-serif;">{brand}</span>'
 
 def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
-    total          = stats["total"]
-    agent_count    = stats["agent_count"]
-    bot_count      = stats["bot_count"]
-    complaint_count= stats["complaint_count"]
-    brand_counts   = stats["brands"]
+    total           = stats["total"]
+    agent_count     = stats["agent_count"]
+    bot_count       = stats["bot_count"]
+    complaint_count = stats["complaint_count"]
+    brand_counts    = stats["brands"]
 
     brand_html = ""
     for b, cnt in brand_counts.items():
@@ -660,7 +634,6 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
         f'font-family:Montserrat,Arial,sans-serif;">{model_used}</span>'
     )
 
-    # ── Kritik kullanıcılar ──
     critical_html = ""
     if ai_data and ai_data.get("critical"):
         crits = ai_data["critical"]
@@ -672,13 +645,16 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
                              "TB": "background:#E30613;color:#fff;"}
                 bs = bt_styles.get(u.get("brand",""), "background:#666;color:#fff;")
                 rows += (
-                    f'<tr style="border-bottom:1px solid #f0e8ff;"><td style="padding:9px 14px;white-space:nowrap;font-size:13px;font-weight:700;color:#2F1555;font-family:Montserrat,Arial,sans-serif;">{u.get("username","-")}</td><td style="padding:9px 14px;"><span style="display:inline-block;padding:1px 7px;{bs}border-radius:3px;font-size:10px;font-weight:700;">{u.get("brand","-")}</span></td><td style="padding:9px 14px;font-size:12px;color:#662D91;line-height:1.5;font-family:Montserrat,Arial,sans-serif;">{u.get("reason","-")}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #f0e8ff;">'
+                    f'<td style="padding:9px 14px;white-space:nowrap;font-size:13px;font-weight:700;color:#2F1555;font-family:Montserrat,Arial,sans-serif;">{u.get("username","-")}</td>'
+                    f'<td style="padding:9px 14px;"><span style="display:inline-block;padding:1px 7px;{bs}border-radius:3px;font-size:10px;font-weight:700;">{u.get("brand","-")}</span></td>'
+                    f'<td style="padding:9px 14px;font-size:12px;color:#662D91;line-height:1.5;font-family:Montserrat,Arial,sans-serif;">{u.get("reason","-")}</td>'
+                    f'</tr>'
                 )
             critical_html = (
-                f'<p style="margin:22px 0 10px;font-size:11px;font-weight:800;color:#2F1555;text-transform:uppercase;letter-spacing:.12em;font-family:Montserrat,Arial,sans-serif;">🚨 Kritik Kullanıcılar</p><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-top:3px solid #FFE600;border-radius:0 0 8px 8px;">{rows}</table>'
+                f'<p style="margin:22px 0 10px;font-size:11px;font-weight:800;color:#2F1555;text-transform:uppercase;letter-spacing:.12em;font-family:Montserrat,Arial,sans-serif;">🚨 Kritik Kullanıcılar</p>'
+                f'<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-top:3px solid #FFE600;border-radius:0 0 8px 8px;">{rows}</table>'
             )
-
-    actions_html = ""  # kaldırıldı
 
     no_data_html = '<p style="color:#B28ABF;font-size:13px;font-family:Montserrat,Arial,sans-serif;">Şikayet/sorun tespit edilemedi.</p>'
 
@@ -769,7 +745,6 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
 
 # ── EXCEL EKİ ────────────────────────────────────────────────
 def build_excel(complaint_chats, date_str, ai_data=None):
-    """Şikayet listesini Excel olarak oluştur (openpyxl)."""
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -781,17 +756,15 @@ def build_excel(complaint_chats, date_str, ai_data=None):
     ws = wb.active
     ws.title = f"Şikayetler {date_str}"
 
-    # Renkler
     HDR_BG  = "2F1555"
     HDR_FG  = "FFE600"
     ROW_ALT = "F3F0FF"
     RED_BG  = "F28B82"
     YLW_BG  = "FBBC04"
 
-    headers = ["#", "Kullanıcı Adı", "Brand", "Agent", "Tag", "Rating", "Yorum", "Tarih", "Chat Linki"]
+    headers    = ["#", "Kullanıcı Adı", "Brand", "Agent", "Tag", "Rating", "Yorum", "Tarih", "Chat Linki"]
     col_widths = [5, 22, 8, 22, 30, 8, 60, 20, 55]
 
-    # Header satırı
     for ci, (h, w) in enumerate(zip(headers, col_widths), 1):
         cell = ws.cell(row=1, column=ci, value=h)
         cell.font      = Font(bold=True, color=HDR_FG, name="Calibri", size=10)
@@ -802,7 +775,7 @@ def build_excel(complaint_chats, date_str, ai_data=None):
     ws.row_dimensions[1].height = 22
     ws.freeze_panes = "A2"
 
-    thin = Side(style="thin", color="E0D8F0")
+    thin   = Side(style="thin", color="E0D8F0")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     portal = "https://dash15.lively-chat.com/ui/90005373/livechat/history/chats/transcriptdetail"
@@ -821,7 +794,6 @@ def build_excel(complaint_chats, date_str, ai_data=None):
         cid      = str(c.get("id") or c.get("chatId") or "")
         link     = f"{portal}?chatId={cid}" if cid else ""
 
-        # Tarih formatla
         try:
             import pytz
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
@@ -831,7 +803,6 @@ def build_excel(complaint_chats, date_str, ai_data=None):
 
         values = [idx, username, brand, agent, tag, rating, comment, ts_fmt, link]
 
-        # Rating'e göre satır rengi
         if rating == 1:
             bg = RED_BG
         elif rating == 2:
@@ -843,24 +814,21 @@ def build_excel(complaint_chats, date_str, ai_data=None):
             cell.font      = Font(name="Calibri", size=9)
             cell.alignment = Alignment(vertical="center", wrap_text=(ci == 7))
             cell.border    = border
-            if ci == 9 and val:  # Link sütunu
+            if ci == 9 and val:
                 cell.hyperlink = val
                 cell.value     = "Chati Aç"
                 cell.font      = Font(name="Calibri", size=9, color="1155CC", underline="single")
 
         ws.row_dimensions[row].height = 18
 
-    # Auto-filter
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
 
-    # ── SEKME 2: AI Kategori Grupları ──────────────────────────
+    # ── SEKME 2: AI Kategori Grupları ──
     if ai_data and ai_data.get("categories"):
         cats = sorted(ai_data["categories"], key=lambda x: x.get("count", 0), reverse=True)
+        ws2  = wb.create_sheet(title="Kategori Grupları")
 
-        ws2 = wb.create_sheet(title="Kategori Grupları")
-
-        # Sütun genişlikleri
-        ws2_cols = ["Kategori", "Brand", "Kullanıcı Adı", "Tag", "Rating", "Yorum", "Tarih", "Chat Linki"]
+        ws2_cols   = ["Kategori", "Brand", "Kullanıcı Adı", "Tag", "Rating", "Yorum", "Tarih", "Chat Linki"]
         ws2_widths = [35, 8, 22, 30, 8, 60, 20, 55]
         for ci, (h, w) in enumerate(zip(ws2_cols, ws2_widths), 1):
             cell = ws2.cell(row=1, column=ci, value=h)
@@ -872,14 +840,11 @@ def build_excel(complaint_chats, date_str, ai_data=None):
         ws2.freeze_panes = "A2"
         ws2.auto_filter.ref = f"A1:{get_column_letter(len(ws2_cols))}1"
 
-        # Her kategori için eşleşen chatler — tag veya yorum benzerliğine göre
-        # Strateji: her kategorinin keyword'lerini çıkar, tag/yorum ile eşleştir
         import re as _re
 
         def cat_keywords(cat_name):
-            """Kategori adından arama keyword'leri üret."""
             name = cat_name.lower()
-            kws = []
+            kws  = []
             if any(w in name for w in ["yatırım", "deposit", "para yatır", "yansımadı", "geçmedi", "eksikliği"]):
                 kws += ["deposit_missing", "deposit_issue", "deposit_query"]
             if any(w in name for w in ["cashback", "casino cashback"]):
@@ -898,27 +863,20 @@ def build_excel(complaint_chats, date_str, ai_data=None):
                 kws += ["deposit_issue", "deposit_missing"]
             if any(w in name for w in ["bonus", "deneme", "goodwill", "iyi niyet"]):
                 kws += ["goodwill_query", "bonus", "deneme"]
-            if any(w in name for w in ["temsilci", "küfür", "hakaret", "davranış"]):
-                kws += [""]  # yorum bazlı
             return kws if kws else []
 
-        # Kategori → chat eşleştirme
-        assigned = set()  # aynı chat birden fazla kategoriye girmesin
+        assigned    = set()
         current_row = 2
-
-        # Kategori başlığı rengi
-        CAT_COLORS = [
+        CAT_COLORS  = [
             "1a237e", "283593", "303f9f", "3949ab", "3f51b5",
             "5c6bc0", "7986cb", "512da8", "673ab7", "7b1fa2",
         ]
 
         for cat_idx, cat in enumerate(cats):
-            cat_name = cat.get("name", "")
-            cat_count = cat.get("count", 0)
-            kws = cat_keywords(cat_name)
+            cat_name  = cat.get("name", "")
+            kws       = cat_keywords(cat_name)
+            matched   = []
 
-            # Bu kategoriye ait chatleri bul
-            matched = []
             for c in complaint_chats:
                 cid = str(c.get("id") or c.get("chatId") or "")
                 if cid in assigned:
@@ -935,14 +893,9 @@ def build_excel(complaint_chats, date_str, ai_data=None):
                     matched.append(c)
 
             if not matched:
-                # Keyword eşleşmedi — yoruma göre dene (son çare)
-                pass
-
-            if not matched:
                 continue
 
-            # Kategori başlık satırı
-            cat_color = CAT_COLORS[cat_idx % len(CAT_COLORS)]
+            cat_color  = CAT_COLORS[cat_idx % len(CAT_COLORS)]
             merge_range = f"A{current_row}:{get_column_letter(len(ws2_cols))}{current_row}"
             ws2.merge_cells(merge_range)
             title_cell = ws2.cell(row=current_row, column=1,
@@ -953,7 +906,6 @@ def build_excel(complaint_chats, date_str, ai_data=None):
             ws2.row_dimensions[current_row].height = 20
             current_row += 1
 
-            # Bu kategorinin chatlerini yaz
             for c in matched:
                 cid     = str(c.get("id") or c.get("chatId") or "")
                 brand   = get_brand(c)
@@ -998,7 +950,6 @@ def build_excel(complaint_chats, date_str, ai_data=None):
     buf.seek(0)
     return buf.getvalue()
 
-
 # ── EMAIL ─────────────────────────────────────────────────────
 def send_email(html, date_str, stats, complaint_chats=None, ai_data=None):
     subject = (f"CS Şikayet Analizi | {date_str} | "
@@ -1010,12 +961,10 @@ def send_email(html, date_str, stats, complaint_chats=None, ai_data=None):
     if len(REPORT_EMAILS) > 1:
         msg["Cc"] = ", ".join(REPORT_EMAILS[1:])
 
-    # HTML body
     alt = MIMEMultipart("alternative")
     alt.attach(MIMEText(html, "html", "utf-8"))
     msg.attach(alt)
 
-    # Excel eki
     if complaint_chats:
         xlsx_bytes = build_excel(complaint_chats, date_str, ai_data=ai_data)
         if xlsx_bytes:
