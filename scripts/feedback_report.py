@@ -242,7 +242,6 @@ def build_prompt(rows, mode, lbl):
             "shortNote":      "Gercek sorunu 1-2 cumle ile acikla — spesifik ol, somut bilgi ver"
         }],
         "critical":    [{"username": "str", "brand": "str", "reason": "Tutar veya aciliyet — 1 cumle, rakam varsa yaz"}],
-        "actionItems": ["Kime ne yapilmali — departman + aksiyon — 1 cumle"],
         "summary":     "Genel durumu 2 cumle ile ozetle, onemli kullanici adi varsa yaz"
     }, ensure_ascii=False)
 
@@ -269,8 +268,7 @@ def build_prompt(rows, mode, lbl):
         "3. users: her uyenin username ve brand bilgisini ekle — hicbirini atla\n"
         "4. categories listesini buyukten kucuge sirala\n"
         "5. Kritik olanlari isaretle (yuksek tutar, acil, cozumsuz, tehdit)\n"
-        "6. actionItems: en az 2, en fazla 5 aksiyon yaz\n"
-        + ("7. Haftalik seyri ozetle — artan/azalan konulari belirt\n" if weekly else "")
+        + ("6. Haftalik seyri ozetle — artan/azalan konulari belirt\n" if weekly else "")
         + "\nBBL=Bonus Black List | SB=Superbetin | BS=Betsat | TB=Turkbet\n"
         "OZET KURALI: Onemli durum varsa ilgili kullanici adini yaz. Genel ifadelerden kac.\n"
         f"Sadece JSON dondur:\n{schema}"
@@ -538,17 +536,6 @@ def render_ai(ai, ai_usage):
                 f'<td style="padding:10px 14px;font-size:12px;color:{C["main"]};line-height:1.5;font-family:Montserrat,Arial,sans-serif;">{u.get("reason","-")}</td></tr>'
             )
         html += f'<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid {C["border"]};border-top:3px solid {C["yellow"]};border-radius:0 0 8px 8px;margin-bottom:18px;" bgcolor="#faf7ff">{crit_rows}</table>'
-
-    if ai.get("actionItems"):
-        html += f'<p style="margin:18px 0 10px;font-size:12px;font-weight:800;color:{C["main"]};letter-spacing:.06em;text-transform:capitalize;font-family:Montserrat,Arial,sans-serif;">\u00d6nerilen Aksiyonlar</p>'
-        for i, a in enumerate(ai["actionItems"]):
-            html += (
-                f'<table cellpadding="0" cellspacing="0" style="margin-bottom:9px;width:100%;"><tr>'
-                f'<td style="vertical-align:top;width:24px;padding-right:10px;">'
-                f'<span style="display:inline-block;width:20px;height:20px;background:{C["dark"]};color:{C["yellow"]};border-radius:50%;font-size:10px;font-weight:700;text-align:center;line-height:20px;font-family:Montserrat,Arial,sans-serif;">{i+1}</span>'
-                f'</td><td style="font-size:13px;color:#4b5563;line-height:1.6;vertical-align:top;font-family:Montserrat,Arial,sans-serif;">{a}</td>'
-                f'</tr></table>'
-            )
 
     if ai.get("summary"):
         html += (
@@ -934,16 +921,6 @@ def build_word_doc(ai, metrics, lbl, breakdown, ai_usage):
             r1.bold = True; r1.font.color.rgb = RGBColor(47, 21, 85)
             r2 = p.add_run(u.get("reason", "-"))
             r2.font.color.rgb = RGBColor(102, 45, 145)
-        doc.add_paragraph()
-
-    # Aksiyonlar
-    if ai and ai.get("actionItems"):
-        h5 = doc.add_heading("Onerilen Aksiyonlar", level=1)
-        for run in h5.runs:
-            run.font.color.rgb = RGBColor(47, 21, 85)
-        for i, a in enumerate(ai["actionItems"]):
-            p = doc.add_paragraph()
-            p.add_run(f"{i+1}. {a}").font.size = Pt(11)
         doc.add_paragraph()
 
     # Özet
