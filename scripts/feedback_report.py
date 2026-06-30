@@ -3,6 +3,7 @@
 # POLIGON CS FEEDBACK AI REPORT — GitHub Actions
 # Google Sheets'ten feedback verilerini çekip AI ile analiz eder
 # Email raporu gönderir
+# v: AKSIYON KURALI prompt satırı kaldırıldı (actions hiçbir yerde render edilmiyordu, gereksiz talimattı)
 # ============================================================
 
 import os
@@ -261,7 +262,6 @@ def build_prompt(rows, mode, lbl):
         "KOTU: \"Cekim sorunlari mevcut\"\n"
         "IYI: \"Onayli havale cekimleri 1-3 is gunu icinde hesaplara yansimamis, musteri maduriyet bildiriyor\"\n\n"
         "KRITIK KURAL: Yuksek tutar (5000 TL+), hesap kapatma tehdidi, acil cozum gerektiren durumlar kritik olarak isaretle.\n\n"
-        "AKSIYON KURALI: Her aksiyon icin hangi departman ne yapmali yaz. Ornek: \"Finans departmani onayli cekim listesini kontrol etmeli.\"\n\n"
         "GOREV:\n"
         "1. Spesifik konu altinda grupla\n"
         "2. brandBreakdown: her brand kac kayit var, SADECE varsa ekle\n"
