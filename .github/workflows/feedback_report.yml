@@ -1,38 +1,41 @@
 name: Feedback AI Report
-
 on:
   schedule:
-    - cron: '0 7 * * 1'   # Haftalık Pazartesi 09:00 Sofia (07:00 UTC yaz)
+    - cron: '0 7 * * 1'   # Haftalık — Pazartesi 09:00 Sofia (07:00 UTC yaz)
+    - cron: '0 7 * * 2-7' # Günlük   — Salı-Pazar 09:00 Sofia (07:00 UTC yaz)
   workflow_dispatch:
     inputs:
       mode:
         description: 'daily veya weekly'
         required: false
         default: 'weekly'
-
 jobs:
   report:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Python kurulum
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Bağımlılıkları kur
         run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client python-docx
-
       - name: Modu belirle
         id: mode
         run: |
           INPUT="${{ github.event.inputs.mode }}"
-          echo "mode=${INPUT:-weekly}" >> $GITHUB_OUTPUT
-
+          if [ -n "$INPUT" ]; then
+            echo "mode=$INPUT" >> $GITHUB_OUTPUT
+          else
+            DOW=$(date +%u)
+            if [ "$DOW" = "1" ]; then
+              echo "mode=weekly" >> $GITHUB_OUTPUT
+            else
+              echo "mode=daily" >> $GITHUB_OUTPUT
+            fi
+          fi
       - name: Feedback Raporu çalıştır
         env:
           SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
