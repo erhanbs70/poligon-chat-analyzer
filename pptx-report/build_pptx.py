@@ -97,17 +97,16 @@ def _save_png(fig, width_in, height_in):
     return buf
 
 
-def build_hourly_volume_chart(hourly_dist, title="Chats by Hour", figsize=(10.63, 3.57)):
-    """Served (mavi) + Missed (kırmızı, üstte stack) bar + Acceptance Rate
-    (yeşil çizgi, ikincil eksen) — orijinal Comm100 dashboard görünümüne
-    yakın, gerçek saatlik served/missed verisiyle."""
+def build_hourly_volume_chart(hourly_dist, title="Chats by Hour", figsize=(10.63, 3.57), served_color="#2E6DA4"):
+    """Served (marka rengi ya da genel mavi) + Missed (kırmızı, üstte stack)
+    bar + Acceptance Rate (yeşil çizgi, ikincil eksen)."""
     hours = [f'{h["hour"]:02d}:00' for h in hourly_dist]
     served = [h.get("served", 0) for h in hourly_dist]
     missed = [h.get("missed", 0) for h in hourly_dist]
     acc = [h.get("acceptancePct", 0) for h in hourly_dist]
 
     fig, ax1 = plt.subplots(figsize=figsize)
-    ax1.bar(hours, served, color="#2E6DA4", label="Served")
+    ax1.bar(hours, served, color=served_color, label="Served")
     ax1.bar(hours, missed, bottom=served, color="#D9534F", label="Missed")
     ax1.set_ylabel("Chats", fontsize=8)
     ax1.tick_params(axis="x", rotation=90, labelsize=6)
@@ -154,7 +153,10 @@ def build_brand_tag_donuts(brand_tag_map, figsize=(11.10, 2.98)):
     # tight_layout yerine subplots_adjust: kenar boşluklarını elle sıfıra
     # yakın tutup donut+legend'ın figürün NEREDEYSE TAMAMINI doldurmasını
     # sağlıyoruz (önceki halde büyük beyaz boşluk kalıyordu).
-    fig.subplots_adjust(left=0.01, right=0.99, top=0.84, bottom=0.03, wspace=0.55)
+    # sağ marj 0.99'dan 0.85'e çekildi: en sağdaki (Turkbet) subplot'un legend'ı
+    # figürün kendi sınırını aşıp kesiliyordu (uzun tag isimlerinde doğrulandı,
+    # bkz. check_overflow.py) — artık her durumda güvenli marj bırakıyor.
+    fig.subplots_adjust(left=0.01, right=0.85, top=0.84, bottom=0.03, wspace=0.55)
     return _save_png(fig, *figsize)
 
 
@@ -444,13 +446,13 @@ def build_pptx(metrics, template_path, out_path, date_label):
 
     brand_hourly = m.get("brandHourly", {})
     replace_picture(prs.slides[4], "Picture 10",
-                     build_hourly_volume_chart(brand_hourly.get("superbetin", []), "Superbetin — Chats by Hour", figsize=(10.71, 3.57)),
+                     build_hourly_volume_chart(brand_hourly.get("superbetin", []), "Superbetin — Chats by Hour", figsize=(10.71, 3.57), served_color=BRAND_COLORS["superbetin"]),
                      0.00, 1.37, 10.71, 3.57)
     replace_picture(prs.slides[5], "Picture 4",
-                     build_hourly_volume_chart(brand_hourly.get("betsat", []), "Betsat — Chats by Hour", figsize=(10.47, 3.54)),
+                     build_hourly_volume_chart(brand_hourly.get("betsat", []), "Betsat — Chats by Hour", figsize=(10.47, 3.54), served_color=BRAND_COLORS["betsat"]),
                      -0.00, 1.31, 10.47, 3.54)
     replace_picture(prs.slides[6], "Picture 5",
-                     build_hourly_volume_chart(brand_hourly.get("turkbet", []), "Turkbet — Chats by Hour", figsize=(10.34, 3.50)),
+                     build_hourly_volume_chart(brand_hourly.get("turkbet", []), "Turkbet — Chats by Hour", figsize=(10.34, 3.50), served_color=BRAND_COLORS["turkbet"]),
                      0.00, 1.27, 10.34, 3.50)
 
     prs.save(out_path)
