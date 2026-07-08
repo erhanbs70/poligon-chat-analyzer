@@ -54,13 +54,17 @@ def get_shape(slide, name):
     raise KeyError(f"Shape '{name}' not found on slide")
 
 
-def _identify_brand_color(shape):
-    """Shape'in içindeki görselin baskın rengine bakarak markayı tespit eder
-    (kırmızı=Turkbet, sarı=Betsat, mavi=Superbetin)."""
+def _identify_brand_and_aspect(shape):
+    """Shape'in içindeki görselin baskın rengine (marka) VE gerçek piksel
+    en-boy oranına bakar. Sabit/tahmini oran yerine HER shape'in kendi
+    görselinin gerçek oranını kullanıyoruz — çünkü aynı marka farklı
+    slaytlarda farklı dosya varyantlarıyla (image4 vs image8 gibi, farklı
+    en-boy oranlarında) karşımıza çıkabiliyor; sabit oran kullanmak bazı
+    slaytlarda logonun gerilip deforme olmasına sebep oluyordu."""
     try:
         blob = shape.image.blob
     except Exception:
-        return None
+        return None, None
     img = Image.open(io.BytesIO(blob)).convert("RGBA")
     w, h = img.size
     counts = {"red": 0, "yellow": 0, "blue": 0}
@@ -76,13 +80,11 @@ def _identify_brand_color(shape):
             elif b > 120 and r < 100:
                 counts["blue"] += 1
     if not any(counts.values()):
-        return None
-    return max(counts, key=counts.get)
+        return None, None
+    brand = max(counts, key=counts.get)
+    return brand, (w / h)
 
 
-# Marka logolarının GERÇEK dosya en-boy oranları (bkz. _replace_logo_images'taki
-# hedef boyutlar) — tüm slaytlarda aynı YÜKSEKLİKTE görünmeleri için kullanılıyor.
-_BRAND_ASPECT = {"red": 1326 / 317, "yellow": 400 / 103, "blue": 359 / 115}
 _LOGO_HEIGHT_IN = 0.55
 _LOGO_TOP_IN = 0.30
 _LOGO_MARGIN_X_IN = 0.60
@@ -91,9 +93,8 @@ _SLIDE_WIDTH_IN = 13.33
 
 def standardize_header_logos(slides):
     """Slide 2-9'daki marka logolarını (Betsat/Superbetin/Turkbet) tek bir
-    standart boyut ve konum şemasına çeker — önceden her slaytta farklı
-    boyut/pozisyondaydılar (orijinal insan yapımı deck'ten miras kalma
-    tutarsızlık), artık hepsi aynı yükseklikte ve aynı hizada."""
+    standart YÜKSEKLİK ve konum şemasına çeker (genişlik her görselin
+    kendi gerçek oranından hesaplanır, distorsiyon olmaz)."""
     for i in range(1, 9):  # Slide 2..9 (0-index 1..8)
         slide = slides[i]
         header_shapes = []
@@ -102,13 +103,12 @@ def standardize_header_logos(slides):
                 top_in = s.top / 914400
                 h_in = s.height / 914400
                 if top_in < 1.1 and h_in < 1.4:
-                    brand = _identify_brand_color(s)
+                    brand, aspect = _identify_brand_and_aspect(s)
                     if brand:
-                        header_shapes.append((s, brand))
+                        header_shapes.append((s, brand, aspect))
 
-        multi = len(set(b for _, b in header_shapes)) > 1
-        for shape, brand in header_shapes:
-            aspect = _BRAND_ASPECT[brand]
+        multi = len(set(b for _, b, _ in header_shapes)) > 1
+        for shape, brand, aspect in header_shapes:
             w_in = _LOGO_HEIGHT_IN * aspect
             shape.height = Inches(_LOGO_HEIGHT_IN)
             shape.width = Inches(w_in)
@@ -125,8 +125,28 @@ def standardize_header_logos(slides):
                 shape.left = Inches((_SLIDE_WIDTH_IN - w_in) / 2)
 
 
+def fix_title_overlap(slides):
+    """Bazı slaytlarda (5/6/7/8) başlık kutusu ("Title...") navy header
+    bandının (y<1.15) İÇİNE denk geliyordu, logoyla üst üste biniyordu.
+    Hepsini slide2'nin doğru pozisyonuyla (y=1.20) hizalıyoruz."""
+    for i in range(1, 9):
+        slide = slides[i]
+        for s in slide.shapes:
+            if s.name.startswith("Title") and s.top is not None and s.has_text_frame:
+                if s.text_frame.text.strip() and (s.top / 914400) < 1.15:
+                    s.top = Inches(1.20)
+
+
 def build_template(src_path, out_path):
-    prs = Presentation(src_path)
+    # ÖNEMLİ SIRALAMA: logo görsellerini Presentation'ı açmadan ÖNCE
+    # değiştiriyoruz. Aksi halde standardize_header_logos() shape boyutlarını
+    # hesaplarken hâlâ ESKİ (değiştirilmemiş) görsellerin oranını okuyup yanlış
+    # kutu boyutu hesaplıyordu — sonradan görsel içeriği değişince kutu ile
+    # görsel oranı uyuşmuyor, logo geriliyordu.
+    tmp_src = src_path + ".logofixed.tmp.pptx"
+    _replace_logo_images_in_place(src_path, tmp_src)
+
+    prs = Presentation(tmp_src)
     slides = prs.slides
 
     # ---------------- SLIDE 1 : Title ----------------
@@ -367,15 +387,14 @@ def build_template(src_path, out_path):
     note_r.font.color.rgb = RGBColor(0x9C, 0xA3, 0xAF)
 
     # ---------------- Header logolarını tüm slaytlarda standart boyut/konuma çekiyoruz ----------------
+    # (Bu noktada logolar ZATEN yeni/doğru görsellerle değiştirilmiş durumda —
+    # bu yüzden burada okunan en-boy oranları doğru, kutu boyutları da doğru
+    # hesaplanıyor.)
     standardize_header_logos(slides)
+    fix_title_overlap(slides)
 
     prs.save(out_path)
-
-    # ---------------- Marka logoları — daha modern/okunur varyantlarla değiştiriliyor ----------------
-    # image3/image9 = Turkbet (kırmızı kutu + artık BEYAZ "BET" yazısı, navy zeminde okunur)
-    # image4/image8 = Betsat (sarı wordmark, eski mor-kutulu versiyon yerine)
-    # image5        = Superbetin (ikon aynen korunuyor, sadece "superbetin" yazısı beyaza boyandı)
-    _replace_logo_images(out_path)
+    os.remove(tmp_src)
     print(f"Template saved -> {out_path}")
 
 
@@ -394,31 +413,29 @@ def _fit_and_pad(src_path, target_w, target_h):
     return buf.getvalue()
 
 
-def _replace_logo_images(pptx_path):
-    """template.pptx içindeki eski marka logosu media dosyalarını, aynı
-    dosya adlarını koruyarak yeni logo asset'leriyle değiştirir (böylece
-    o dosyayı referans eden TÜM slaytlar otomatik güncellenir)."""
+def _replace_logo_images_in_place(src_pptx_path, dst_pptx_path):
+    """src_pptx_path'i okuyup, marka logosu media dosyalarını yeni logo
+    asset'leriyle değiştirilmiş halini dst_pptx_path'e yazar. Presentation()
+    ile açılmadan ÖNCE çalıştırılmalı (bkz. build_template başındaki not)."""
     targets = {
         "ppt/media/image3.png": (os.path.join(ASSETS_DIR, "logo_turkbet.png"), None),
-        "ppt/media/image9.png": (os.path.join(ASSETS_DIR, "logo_turkbet.png"), (667, 160)),
+        "ppt/media/image9.png": (os.path.join(ASSETS_DIR, "logo_turkbet.png"), (669, 160)),
         "ppt/media/image4.png": (os.path.join(ASSETS_DIR, "logo_betsat.png"), (400, 103)),
-        "ppt/media/image8.png": (os.path.join(ASSETS_DIR, "logo_betsat.png"), (182, 65)),
+        "ppt/media/image8.png": (os.path.join(ASSETS_DIR, "logo_betsat.png"), (252, 65)),
         "ppt/media/image5.png": (os.path.join(ASSETS_DIR, "logo_superbetin.png"), (359, 115)),
     }
     new_bytes = {}
-    for arcname, (src_path, target_size) in targets.items():
+    for arcname, (asset_path, target_size) in targets.items():
         if target_size is None:
-            with open(src_path, "rb") as f:
+            with open(asset_path, "rb") as f:
                 new_bytes[arcname] = f.read()
         else:
-            new_bytes[arcname] = _fit_and_pad(src_path, *target_size)
+            new_bytes[arcname] = _fit_and_pad(asset_path, *target_size)
 
-    tmp_path = pptx_path + ".tmp"
-    with zipfile.ZipFile(pptx_path, "r") as zin, zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+    with zipfile.ZipFile(src_pptx_path, "r") as zin, zipfile.ZipFile(dst_pptx_path, "w", zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             data = new_bytes.get(item.filename, zin.read(item.filename))
             zout.writestr(item, data)
-    os.replace(tmp_path, pptx_path)
 
 
 if __name__ == "__main__":
