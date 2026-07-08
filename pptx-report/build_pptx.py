@@ -11,6 +11,7 @@ import io
 import copy
 from pptx import Presentation
 from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -198,6 +199,49 @@ def replace_picture(slide, shape_name, png_stream, left_in, top_in, width_in, he
 
 
 # ============================================================
+# SLIDE 9 — "Yesterday's Values" rengini "Desired Values" eşiklerine göre
+# DİNAMİK ayarla. Şablondaki eski (demo verisinden kalma, donuk) yeşil/
+# kırmızı renkler yerine artık gerçek karşılaştırma sonucu kullanılıyor.
+# ============================================================
+_GREEN = RGBColor(0x00, 0xB0, 0x50)
+_RED = RGBColor(0xFF, 0x00, 0x00)
+
+
+def _set_run_color(shape, para_idx, run_idx, color):
+    try:
+        shape.text_frame.paragraphs[para_idx].runs[run_idx].font.color.rgb = color
+    except IndexError:
+        pass
+
+
+def color_yesterday_values(slide, m):
+    tb = None
+    for shape in slide.shapes:
+        if shape.name == "TextBox 14":
+            tb = shape
+            break
+    if tb is None:
+        return
+
+    # (para_idx, [run_idx'ler], koşul) — koşul True ise YEŞİL, değilse KIRMIZI
+    checks = [
+        (1, [1], m["avgResponse"] <= 45),                 # Response Time: Max. 45s
+        (2, [1], m["avgDuration"] <= 540),                # Chat Duration: Max. 9m
+        (3, [1], (m["satisfaction"] or 0) >= 4),          # Satisfaction: Min. 4
+        (4, [1, 2], m["avgWaitServed"] <= 40),            # Wait Time (Served): Max. 40s
+        (5, [2, 3], m["avgWaitMissed"] <= 60),            # Wait Time (Missed): Max. 60s
+        (6, [1], m["acceptancePct"] >= 95),                # Acceptance: Min. %95
+    ]
+    for para_idx, run_idxs, ok in checks:
+        for run_idx in run_idxs:
+            _set_run_color(tb, para_idx, run_idx, _GREEN if ok else _RED)
+    # Rated Chats için "Desired Values"ta bir eşik yok — yeşil/kırmızı
+    # yargılamıyoruz, nötr siyaha çekiyoruz (şablondaki eski yeşili miras
+    # almasın diye).
+    _set_run_color(tb, 7, 1, RGBColor(0x00, 0x00, 0x00))
+
+
+# ============================================================
 # TABLE FILL (Slide 8 — Top 10 Tags table)
 # ============================================================
 def fill_top_tags_table(slide, top_tags):
@@ -209,11 +253,25 @@ def fill_top_tags_table(slide, top_tags):
     if table_shape is None:
         return
     table = table_shape.table
+
+    # Orijinal kolon genişlikleri (1.94" tag adı + 0.94" sayı) uzun tag
+    # isimlerinde ("casino_private_bonus_query" gibi) satır taşmasına
+    # sebep oluyordu. Genişletip fontu da biraz küçültüyoruz.
+    col0_width, col1_width = Inches(3.1), Inches(0.9)
+    table.columns[0].width = col0_width
+    table.columns[1].width = col1_width
+    table_shape.width = col0_width + col1_width
+
     for i, (tag, count) in enumerate(top_tags):
         if i >= len(table.rows):
             break
-        table.cell(i, 0).text = tag
-        table.cell(i, 1).text = str(count)
+        for col, text in ((0, tag), (1, str(count))):
+            cell = table.cell(i, col)
+            cell.text_frame.word_wrap = False
+            cell.text_frame.text = text
+            for para in cell.text_frame.paragraphs:
+                for run in para.runs:
+                    run.font.size = Pt(10)
 
 
 # ============================================================
@@ -312,6 +370,7 @@ def build_pptx(metrics, template_path, out_path, date_label):
         tokens["{{" + t + "}}"] = "—"
 
     replace_all_tokens(prs, tokens)
+    color_yesterday_values(prs.slides[8], m)
 
     # ---- Slide 8: Top 10 Tags table ----
     fill_top_tags_table(prs.slides[7], m["topTags"])
