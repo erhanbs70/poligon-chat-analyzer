@@ -10,8 +10,10 @@ Action usage/per chat, which need separate data sources not yet wired in.
 import io
 import copy
 from pptx import Presentation
-from pptx.util import Inches, Pt
+from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -202,6 +204,56 @@ def replace_picture(slide, shape_name, png_stream, left_in, top_in, width_in, he
 
 
 # ============================================================
+# SLIDE 2 — KPI kartları (Total Chats / Success / Missed).
+# Eski "- Total Chats: X" madde işaretli listesinin yerine geçiyor,
+# öneri #2: renkli, büyük rakamlı özet kartlar.
+# ============================================================
+def add_kpi_card(slide, x_in, y_in, w_in, h_in, value, label, bg_hex, text_hex):
+    shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in), Inches(y_in), Inches(w_in), Inches(h_in))
+    shp.adjustments[0] = 0.12
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = RGBColor.from_string(bg_hex)
+    shp.line.fill.background()
+    shp.shadow.inherit = False
+
+    tf = shp.text_frame
+    tf.word_wrap = True
+    tf.margin_left = Inches(0.06)
+    tf.margin_right = Inches(0.06)
+    tf.margin_top = Inches(0.08)
+    tf.margin_bottom = Inches(0.08)
+
+    p_val = tf.paragraphs[0]
+    p_val.alignment = PP_ALIGN.CENTER
+    r_val = p_val.add_run()
+    r_val.text = value
+    r_val.font.size = Pt(20)
+    r_val.font.bold = True
+    r_val.font.color.rgb = RGBColor.from_string(text_hex)
+
+    p_lbl = tf.add_paragraph()
+    p_lbl.alignment = PP_ALIGN.CENTER
+    r_lbl = p_lbl.add_run()
+    r_lbl.text = label
+    r_lbl.font.size = Pt(9)
+    r_lbl.font.color.rgb = RGBColor.from_string(text_hex)
+    return shp
+
+
+def add_slide2_kpi_cards(slide, m):
+    cards = [
+        (fmt_n(m["totalChats"]), "Total Chats", "E6F1FB", "0C447C"),
+        (fmt_pct(m["acceptancePct"]) + "%", "Success", "EAF3DE", "27500A"),
+        (fmt_n(m["missed"]), "Missed", "FCEBEB", "791F1F"),
+    ]
+    x, w = 10.75, 2.47
+    y, h, gap = 1.52, 1.0, 0.15
+    for value, label, bg, fg in cards:
+        add_kpi_card(slide, x, y, w, h, value, label, bg, fg)
+        y += h + gap
+
+
+# ============================================================
 # SLIDE 9 — "Yesterday's Values" rengini "Desired Values" eşiklerine göre
 # DİNAMİK ayarla. Şablondaki eski (demo verisinden kalma, donuk) yeşil/
 # kırmızı renkler yerine artık gerçek karşılaştırma sonucu kullanılıyor.
@@ -374,6 +426,7 @@ def build_pptx(metrics, template_path, out_path, date_label):
 
     replace_all_tokens(prs, tokens)
     color_yesterday_values(prs.slides[8], m)
+    add_slide2_kpi_cards(prs.slides[1], m)
 
     # ---- Slide 8: Top 10 Tags table ----
     fill_top_tags_table(prs.slides[7], m["topTags"])

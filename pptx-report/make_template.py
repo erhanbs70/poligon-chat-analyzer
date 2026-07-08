@@ -8,6 +8,7 @@ Run once (or whenever the visual design changes):
 """
 import sys
 from pptx import Presentation
+from pptx.util import Emu
 
 
 def set_paragraph_text(para, new_text):
@@ -57,14 +58,17 @@ def build_template(src_path, out_path):
     s2 = slides[1]
 
     tb1 = get_shape(s2, "TextBox 1")
-    replace_exact_runs(tb1, {
-        "      - Total Chats: 5486": "      - Total Chats: {{S2_TOTAL}}",
-        "      - Total Served Chats: 5348": "      - Total Served Chats: {{S2_SERVED}}",
-        "138": "{{S2_MISSED}}",
-        ": 97,48": ": {{S2_SUCCESS}}",
-    })
-    # narrative paragraph (index 4) -> single auto-generated note token
-    set_paragraph_text(tb1.text_frame.paragraphs[4], "{{S2_NOTE}}")
+    # Toplam Chats/Served/Missed/Success artık build_pptx.py'de KPI kart
+    # olarak ekleniyor — bu metin kutusundaki eski madde işaretli satırları
+    # (header + 3 sayısal satır) siliyoruz, sadece anlatı notu kalıyor.
+    paras = tb1.text_frame.paragraphs
+    for idx in (3, 2, 1, 0):  # ters sırada sil, index kaymasın
+        paras[idx]._p.getparent().remove(paras[idx]._p)
+    # not paragrafı artık index 0
+    set_paragraph_text(tb1.text_frame.paragraphs[0], "{{S2_NOTE}}")
+    # Kartlara yer açmak için metin kutusunu aşağı kaydırıp küçültüyoruz
+    tb1.top = Emu(int(4.97 * 914400))
+    tb1.height = Emu(int(0.89 * 914400))
 
     # Hour breakdown boxes -> index-based (run positions verified stable)
     def fill_hour_box(shape, prefix):
