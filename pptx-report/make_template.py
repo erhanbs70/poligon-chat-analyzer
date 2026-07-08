@@ -7,10 +7,17 @@ Run once (or whenever the visual design changes):
     python3 make_template.py template_source.pptx template.pptx
 """
 import sys
+import os
+import io
+import zipfile
 from pptx import Presentation
-from pptx.util import Emu, Inches
+from pptx.util import Emu, Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
+from PIL import Image
+
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
 
 def set_paragraph_text(para, new_text):
@@ -266,8 +273,78 @@ def build_template(src_path, out_path):
             shp.top = Inches(7.36)
             shp.height = Inches(0.06)
 
+    # ---------------- SLIDE 1: diğerleriyle tutarlı navy tasarım + yorum alanı ----------------
+    s1_slide = slides[0]
+    s1_slide.background.fill.solid()
+    s1_slide.background.fill.fore_color.rgb = NAVY
+    # Alt başlık (tarih) beyaza çevriliyor (navy zeminde okunur olsun diye)
+    subtitle = get_shape(s1_slide, "Subtitle 2")
+    for para in subtitle.text_frame.paragraphs:
+        for run in para.runs:
+            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    # Yorum/not alanı — önceden yer ayrılmamıştı, kullanıcı elle yazabilsin diye
+    # ipucu metniyle boş bir kutu ekleniyor (logonun altında, alt çizginin üstünde)
+    note_box = s1_slide.shapes.add_textbox(Inches(1.20), Inches(6.10), Inches(11.00), Inches(1.10))
+    note_tf = note_box.text_frame
+    note_tf.word_wrap = True
+    note_p = note_tf.paragraphs[0]
+    note_p.alignment = PP_ALIGN.CENTER
+    note_r = note_p.add_run()
+    note_r.text = "(Yorum / not eklemek için buraya tıklayın)"
+    note_r.font.size = Pt(12)
+    note_r.font.italic = True
+    note_r.font.color.rgb = RGBColor(0x8A, 0x93, 0xA6)
+
     prs.save(out_path)
+
+    # ---------------- Marka logoları — daha modern/okunur varyantlarla değiştiriliyor ----------------
+    # image3/image9 = Turkbet (kırmızı kutu + artık BEYAZ "BET" yazısı, navy zeminde okunur)
+    # image4/image8 = Betsat (sarı wordmark, eski mor-kutulu versiyon yerine)
+    # image5        = Superbetin (ikon aynen korunuyor, sadece "superbetin" yazısı beyaza boyandı)
+    _replace_logo_images(out_path)
     print(f"Template saved -> {out_path}")
+
+
+def _fit_and_pad(src_path, target_w, target_h):
+    """Kaynak görseli, oranını bozmadan hedef kutuya sığdırıp ortalar
+    (şeffaf dolgu ile) — marka logosunun gerilip deforme olmaması için."""
+    src = Image.open(src_path).convert("RGBA")
+    sw, sh = src.size
+    scale = min(target_w / sw, target_h / sh)
+    nw, nh = max(1, round(sw * scale)), max(1, round(sh * scale))
+    resized = src.resize((nw, nh), Image.LANCZOS)
+    canvas = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    canvas.paste(resized, ((target_w - nw) // 2, (target_h - nh) // 2), resized)
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _replace_logo_images(pptx_path):
+    """template.pptx içindeki eski marka logosu media dosyalarını, aynı
+    dosya adlarını koruyarak yeni logo asset'leriyle değiştirir (böylece
+    o dosyayı referans eden TÜM slaytlar otomatik güncellenir)."""
+    targets = {
+        "ppt/media/image3.png": (os.path.join(ASSETS_DIR, "logo_turkbet.png"), None),
+        "ppt/media/image9.png": (os.path.join(ASSETS_DIR, "logo_turkbet.png"), (667, 160)),
+        "ppt/media/image4.png": (os.path.join(ASSETS_DIR, "logo_betsat.png"), (400, 103)),
+        "ppt/media/image8.png": (os.path.join(ASSETS_DIR, "logo_betsat.png"), (182, 65)),
+        "ppt/media/image5.png": (os.path.join(ASSETS_DIR, "logo_superbetin.png"), (359, 115)),
+    }
+    new_bytes = {}
+    for arcname, (src_path, target_size) in targets.items():
+        if target_size is None:
+            with open(src_path, "rb") as f:
+                new_bytes[arcname] = f.read()
+        else:
+            new_bytes[arcname] = _fit_and_pad(src_path, *target_size)
+
+    tmp_path = pptx_path + ".tmp"
+    with zipfile.ZipFile(pptx_path, "r") as zin, zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = new_bytes.get(item.filename, zin.read(item.filename))
+            zout.writestr(item, data)
+    os.replace(tmp_path, pptx_path)
 
 
 if __name__ == "__main__":
