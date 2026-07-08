@@ -54,6 +54,77 @@ def get_shape(slide, name):
     raise KeyError(f"Shape '{name}' not found on slide")
 
 
+def _identify_brand_color(shape):
+    """Shape'in içindeki görselin baskın rengine bakarak markayı tespit eder
+    (kırmızı=Turkbet, sarı=Betsat, mavi=Superbetin)."""
+    try:
+        blob = shape.image.blob
+    except Exception:
+        return None
+    img = Image.open(io.BytesIO(blob)).convert("RGBA")
+    w, h = img.size
+    counts = {"red": 0, "yellow": 0, "blue": 0}
+    for x in range(0, w, max(1, w // 20)):
+        for y in range(0, h, max(1, h // 6)):
+            r, g, b, a = img.getpixel((x, y))
+            if a < 50:
+                continue
+            if r > 180 and g < 80 and b < 80:
+                counts["red"] += 1
+            elif r > 180 and g > 150 and b < 80:
+                counts["yellow"] += 1
+            elif b > 120 and r < 100:
+                counts["blue"] += 1
+    if not any(counts.values()):
+        return None
+    return max(counts, key=counts.get)
+
+
+# Marka logolarının GERÇEK dosya en-boy oranları (bkz. _replace_logo_images'taki
+# hedef boyutlar) — tüm slaytlarda aynı YÜKSEKLİKTE görünmeleri için kullanılıyor.
+_BRAND_ASPECT = {"red": 1326 / 317, "yellow": 400 / 103, "blue": 359 / 115}
+_LOGO_HEIGHT_IN = 0.55
+_LOGO_TOP_IN = 0.30
+_LOGO_MARGIN_X_IN = 0.60
+_SLIDE_WIDTH_IN = 13.33
+
+
+def standardize_header_logos(slides):
+    """Slide 2-9'daki marka logolarını (Betsat/Superbetin/Turkbet) tek bir
+    standart boyut ve konum şemasına çeker — önceden her slaytta farklı
+    boyut/pozisyondaydılar (orijinal insan yapımı deck'ten miras kalma
+    tutarsızlık), artık hepsi aynı yükseklikte ve aynı hizada."""
+    for i in range(1, 9):  # Slide 2..9 (0-index 1..8)
+        slide = slides[i]
+        header_shapes = []
+        for s in slide.shapes:
+            if s.shape_type == 13 and s.top is not None:
+                top_in = s.top / 914400
+                h_in = s.height / 914400
+                if top_in < 1.1 and h_in < 1.4:
+                    brand = _identify_brand_color(s)
+                    if brand:
+                        header_shapes.append((s, brand))
+
+        multi = len(set(b for _, b in header_shapes)) > 1
+        for shape, brand in header_shapes:
+            aspect = _BRAND_ASPECT[brand]
+            w_in = _LOGO_HEIGHT_IN * aspect
+            shape.height = Inches(_LOGO_HEIGHT_IN)
+            shape.width = Inches(w_in)
+            shape.top = Inches(_LOGO_TOP_IN)
+            if multi:
+                if brand == "yellow":       # Betsat -> sol
+                    shape.left = Inches(_LOGO_MARGIN_X_IN)
+                elif brand == "blue":       # Superbetin -> orta
+                    shape.left = Inches((_SLIDE_WIDTH_IN - w_in) / 2)
+                elif brand == "red":        # Turkbet -> sağ
+                    shape.left = Inches(_SLIDE_WIDTH_IN - _LOGO_MARGIN_X_IN - w_in)
+            else:
+                # Tek marka gösteren slayt (5/6/7) -> ortala
+                shape.left = Inches((_SLIDE_WIDTH_IN - w_in) / 2)
+
+
 def build_template(src_path, out_path):
     prs = Presentation(src_path)
     slides = prs.slides
@@ -273,7 +344,7 @@ def build_template(src_path, out_path):
             shp.top = Inches(7.36)
             shp.height = Inches(0.06)
 
-    # ---------------- SLIDE 1: diğerleriyle tutarlı navy tasarım + yorum alanı ----------------
+    # ---------------- SLIDE 1: diğerleriyle tutarlı navy tasarım ----------------
     s1_slide = slides[0]
     s1_slide.background.fill.solid()
     s1_slide.background.fill.fore_color.rgb = NAVY
@@ -282,18 +353,21 @@ def build_template(src_path, out_path):
     for para in subtitle.text_frame.paragraphs:
         for run in para.runs:
             run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-    # Yorum/not alanı — önceden yer ayrılmamıştı, kullanıcı elle yazabilsin diye
-    # ipucu metniyle boş bir kutu ekleniyor (logonun altında, alt çizginin üstünde)
-    note_box = s1_slide.shapes.add_textbox(Inches(1.20), Inches(6.10), Inches(11.00), Inches(1.10))
+
+    # ---------------- SLIDE 2: yorum/not alanı (asıl istenen yer burasıydı) ----------------
+    note_box = s2.shapes.add_textbox(Inches(10.75), Inches(5.90), Inches(2.47), Inches(0.42))
     note_tf = note_box.text_frame
     note_tf.word_wrap = True
     note_p = note_tf.paragraphs[0]
     note_p.alignment = PP_ALIGN.CENTER
     note_r = note_p.add_run()
-    note_r.text = "(Yorum / not eklemek için buraya tıklayın)"
-    note_r.font.size = Pt(12)
+    note_r.text = "(Yorum eklemek için tıklayın)"
+    note_r.font.size = Pt(9)
     note_r.font.italic = True
-    note_r.font.color.rgb = RGBColor(0x8A, 0x93, 0xA6)
+    note_r.font.color.rgb = RGBColor(0x9C, 0xA3, 0xAF)
+
+    # ---------------- Header logolarını tüm slaytlarda standart boyut/konuma çekiyoruz ----------------
+    standardize_header_logos(slides)
 
     prs.save(out_path)
 
