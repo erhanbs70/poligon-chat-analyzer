@@ -126,15 +126,25 @@ def standardize_header_logos(slides):
 
 
 def fix_title_overlap(slides):
-    """Bazı slaytlarda (5/6/7/8) başlık kutusu ("Title...") navy header
-    bandının (y<1.15) İÇİNE denk geliyordu, logoyla üst üste biniyordu.
-    Hepsini slide2'nin doğru pozisyonuyla (y=1.20) hizalıyoruz."""
-    for i in range(1, 9):
+    """Slide 5/6/7/8'de başlık kutusu ("Title...") ya navy header bandının
+    içine ya da hemen altındaki grafiğin üst kenarına denk geliyordu
+    (grafik bu slaytlarda alışılmadık şekilde yükarıda başlıyor, y~1.27-1.37).
+    En sağlam çözüm: başlığı bandın KENDİSİNE (logoların altına), beyaz
+    yazıyla sabitlemek — böylece ne bantla ne alttaki grafikle asla çakışmaz."""
+    AFFECTED_SLIDES = (4, 5, 6, 7)  # 0-index: slide 5,6,7,8
+    for i in AFFECTED_SLIDES:
         slide = slides[i]
         for s in slide.shapes:
             if s.name.startswith("Title") and s.top is not None and s.has_text_frame:
-                if s.text_frame.text.strip() and (s.top / 914400) < 1.15:
-                    s.top = Inches(1.20)
+                if not s.text_frame.text.strip():
+                    continue
+                s.top = Inches(0.86)
+                s.height = Inches(0.29)
+                for para in s.text_frame.paragraphs:
+                    for run in para.runs:
+                        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                        if run.font.size and run.font.size.pt > 16:
+                            run.font.size = Pt(16)
 
 
 def build_template(src_path, out_path):
