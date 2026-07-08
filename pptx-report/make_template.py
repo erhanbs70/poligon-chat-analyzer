@@ -162,9 +162,68 @@ def build_template(src_path, out_path):
     # ---------------- SLIDE 8 : Top 10 Tags ----------------
     # Table cells are filled directly in build_pptx.py at run time (not tokens),
     # since the number of rows/tags is dynamic. Nothing to templatize here.
+    # Küçük tekrar logoları (büyük marka logolarının hemen altındaki küçük
+    # kopyaları) kalıcı olarak siliniyor — kalabalık/gereksiz görünüyorlardı.
+    s8 = slides[7]
+    for shape_name in ("Picture 9", "Picture 10", "Picture 15"):
+        try:
+            shp = get_shape(s8, shape_name)
+            shp._element.getparent().remove(shp._element)
+        except KeyError:
+            pass
 
-    # ---------------- SLIDE 9 : dropped from automation for now ----------------
-    # (kept as-is in the template; simply not filled / can be deleted later)
+    # ---------------- SLIDE 9 : E-mail/Call (manuel) + Yesterday's Values (otomatik) ----------------
+    s9 = slides[8]
+
+    # "Yesterday's Values" — bu veri zaten Slide 3 ile aynı kaynaktan geliyor,
+    # otomatik doldurulabilir.
+    tb14 = get_shape(s9, "TextBox 14")
+    replace_run_by_index(tb14, 1, 1, "{{S9_RESPONSE}}")
+    replace_run_by_index(tb14, 2, 1, "{{S9_DURATION}}")
+    replace_run_by_index(tb14, 3, 1, " {{S9_SATISFACTION}}")
+    replace_run_by_index(tb14, 4, 2, " {{S9_WAIT_SERVED}}")
+    replace_run_by_index(tb14, 5, 2, "{{S9_WAIT_MISSED}}")
+    replace_run_by_index(tb14, 5, 3, "")
+    replace_run_by_index(tb14, 6, 1, "{{S9_ACCEPTANCE}}")
+    replace_run_by_index(tb14, 7, 1, " {{S9_RATED_PCT}}")
+
+    # "Solved E-mails" — Zendesk kaynaklı, elimizde yok. Manuel doldurulacak (boş/—).
+    email_shape = get_shape(s9, "Content Placeholder 2")
+    replace_run_by_index(email_shape, 0, 5, "{{S9_EMAIL_SB_COUNT}}")
+    replace_run_by_index(email_shape, 0, 10, " {{S9_EMAIL_SB_TIME}}")
+    replace_run_by_index(email_shape, 0, 13,
+                          ": {{S9_EMAIL_BS_COUNT}} / First resolution time median: {{S9_EMAIL_BS_TIME}}")
+    replace_run_by_index(email_shape, 0, 18, " {{S9_EMAIL_TB_COUNT}} ")
+    replace_run_by_index(email_shape, 0, 20, " : {{S9_EMAIL_TB_TIME}}")
+
+    # "Call Statistics" — call panel kaynaklı, elimizde yok. Manuel doldurulacak (boş/—).
+    tb_bs = get_shape(s9, "TextBox 4")  # BS = Betsat
+    replace_run_by_index(tb_bs, 0, 6, " {{S9_CALL_BS_ATTEMPTS}}")
+    replace_run_by_index(tb_bs, 0, 10, " {{S9_CALL_BS_REACHED}} ")
+    replace_run_by_index(tb_bs, 0, 12, "{{S9_CALL_BS_REACHED_PCT}}")
+    replace_run_by_index(tb_bs, 0, 13, ")")
+    replace_run_by_index(tb_bs, 0, 18, "{{S9_CALL_BS_NOTREACHED}}")
+    replace_run_by_index(tb_bs, 0, 20, "{{S9_CALL_BS_NOTREACHED_PCT}}")
+    replace_run_by_index(tb_bs, 0, 21, ")")
+
+    tb_sb = get_shape(s9, "TextBox 15")  # SB = Superbetin
+    replace_run_by_index(tb_sb, 0, 6, " {{S9_CALL_SB_ATTEMPTS}}")
+    replace_run_by_index(tb_sb, 1, 3, "{{S9_CALL_SB_REACHED}}")
+    replace_run_by_index(tb_sb, 1, 4, " ({{S9_CALL_SB_REACHED_PCT}})")
+    replace_run_by_index(tb_sb, 1, 9, "{{S9_CALL_SB_NOTREACHED}}")
+    replace_run_by_index(tb_sb, 1, 10, " ({{S9_CALL_SB_NOTREACHED_PCT}})")
+
+    tb_tb = get_shape(s9, "TextBox 16")  # TB = Turkbet
+    replace_run_by_index(tb_tb, 0, 6, " {{S9_CALL_TB_ATTEMPTS}}")
+    replace_run_by_index(tb_tb, 1, 2, " {{S9_CALL_TB_REACHED}} (")
+    replace_run_by_index(tb_tb, 1, 3, "{{S9_CALL_TB_REACHED_PCT}}")
+    replace_run_by_index(tb_tb, 1, 4, ")")
+    replace_run_by_index(tb_tb, 1, 10, "{{S9_CALL_TB_NOTREACHED}}")
+    replace_run_by_index(tb_tb, 1, 11, " ({{S9_CALL_TB_NOTREACHED_PCT}})")
+
+    # Kaynağı belirsiz, tek başına duran "207 " kutusu — temizliyoruz.
+    rect1 = get_shape(s9, "Rectangle 1")
+    rect1.text_frame.paragraphs[0].runs[0].text = ""
 
     prs.save(out_path)
     print(f"Template saved -> {out_path}")

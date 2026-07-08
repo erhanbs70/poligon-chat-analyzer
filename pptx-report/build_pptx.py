@@ -145,9 +145,9 @@ def build_brand_tag_donuts(brand_tag_map, figsize=(11.10, 2.98)):
             values.append(rest_sum)
         ax.pie(values, wedgeprops=dict(width=0.45), startangle=90,
                colors=plt.cm.tab20.colors[:len(values)])
-        ax.set_title(BRAND_LABELS[brand], fontsize=9, pad=2)
+        ax.set_title(BRAND_LABELS[brand], fontsize=8, pad=2)
         ax.legend(labels, loc="center left", bbox_to_anchor=(0.95, 0.5),
-                  fontsize=5.5, frameon=False, labelspacing=0.3, handlelength=1)
+                  fontsize=4.5, frameon=False, labelspacing=0.25, handlelength=1, handletextpad=0.4)
     fig.tight_layout(pad=0.4, w_pad=2.2)
     return _save_png(fig, *figsize)
 
@@ -229,8 +229,7 @@ def build_pptx(metrics, template_path, out_path, date_label):
     peak = m["peakHours"][0] if m["peakHours"] else {"hour": 0, "count": 0, "missed": 0, "acceptancePct": 0}
     if peak.get("missed", 0) > 0:
         note = (f'En yüksek missed chat sayısı {peak["hour"]:02d}:00–{(peak["hour"]+1)%24:02d}:00 '
-                f'arasında görüldü ({fmt_n(peak["missed"])} chat kaçtı, kabul oranı %{fmt_pct(peak["acceptancePct"])}). '
-                f'Olayın sebebini buraya ekleyin.')
+                f'arasında görüldü ({fmt_n(peak["missed"])} chat kaçtı, kabul oranı %{fmt_pct(peak["acceptancePct"])}).')
     else:
         note = (f'En yoğun saat aralığı {peak["hour"]:02d}:00–{(peak["hour"]+1)%24:02d}:00 '
                 f'oldu ({fmt_n(peak["count"])} chat). Missed chat görülmedi.')
@@ -286,6 +285,32 @@ def build_pptx(metrics, template_path, out_path, date_label):
         tokens[f"{{{{{prefix}_AGENTS}}}}"] = str(h.get("agents", 0))
         tokens[f"{{{{{prefix}_CPA}}}}"] = str(cpa)
 
+    # ---- Slide 9: "Yesterday's Values" (elimizdeki veriyle otomatik) ----
+    tokens["{{S9_RESPONSE}}"] = f'{round(m["avgResponse"])}s'
+    tokens["{{S9_DURATION}}"] = fmt_min_sec(m["avgDuration"])
+    tokens["{{S9_SATISFACTION}}"] = (
+        f'{m["satisfaction"]:.2f}'.replace(".", ",") if m.get("satisfaction") is not None else "—"
+    )
+    tokens["{{S9_WAIT_SERVED}}"] = fmt_min_sec(m["avgWaitServed"])
+    tokens["{{S9_WAIT_MISSED}}"] = fmt_min_sec(m["avgWaitMissed"])
+    tokens["{{S9_ACCEPTANCE}}"] = fmt_pct(m["acceptancePct"]) + "%"
+    tokens["{{S9_RATED_PCT}}"] = fmt_pct(m["ratedPct"]) + "%"
+
+    # ---- Slide 9: E-mail (Zendesk) + Call Statistics (call panel) — elimizde
+    # yok, manuel doldurulacak şekilde boş bırakılıyor ----
+    blank_tokens = [
+        "S9_EMAIL_SB_COUNT", "S9_EMAIL_SB_TIME", "S9_EMAIL_BS_COUNT", "S9_EMAIL_BS_TIME",
+        "S9_EMAIL_TB_COUNT", "S9_EMAIL_TB_TIME",
+        "S9_CALL_BS_ATTEMPTS", "S9_CALL_BS_REACHED", "S9_CALL_BS_REACHED_PCT",
+        "S9_CALL_BS_NOTREACHED", "S9_CALL_BS_NOTREACHED_PCT",
+        "S9_CALL_SB_ATTEMPTS", "S9_CALL_SB_REACHED", "S9_CALL_SB_REACHED_PCT",
+        "S9_CALL_SB_NOTREACHED", "S9_CALL_SB_NOTREACHED_PCT",
+        "S9_CALL_TB_ATTEMPTS", "S9_CALL_TB_REACHED", "S9_CALL_TB_REACHED_PCT",
+        "S9_CALL_TB_NOTREACHED", "S9_CALL_TB_NOTREACHED_PCT",
+    ]
+    for t in blank_tokens:
+        tokens["{{" + t + "}}"] = "—"
+
     replace_all_tokens(prs, tokens)
 
     # ---- Slide 8: Top 10 Tags table ----
@@ -312,12 +337,6 @@ def build_pptx(metrics, template_path, out_path, date_label):
     replace_picture(prs.slides[6], "Picture 5",
                      build_hourly_volume_chart(brand_hourly.get("turkbet", []), "Turkbet — Chats by Hour", figsize=(10.34, 3.50)),
                      0.00, 1.27, 10.34, 3.50)
-
-    # ---- Slide 9 (email/call stats) dropped from this deck for now ----
-    xml_slides = prs.slides._sldIdLst
-    slides = list(xml_slides)
-    if len(slides) >= 9:
-        xml_slides.remove(slides[8])
 
     prs.save(out_path)
     return out_path
