@@ -8,7 +8,9 @@ Run once (or whenever the visual design changes):
 """
 import sys
 from pptx import Presentation
-from pptx.util import Emu
+from pptx.util import Emu, Inches
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 
 
 def set_paragraph_text(para, new_text):
@@ -228,6 +230,41 @@ def build_template(src_path, out_path):
     # Kaynağı belirsiz, tek başına duran "207 " kutusu — temizliyoruz.
     rect1 = get_shape(s9, "Rectangle 1")
     rect1.text_frame.paragraphs[0].runs[0].text = ""
+
+    # ---------------- TASARIM B: koyu lacivert header bandı ----------------
+    # Slide 2-9 (içerik slaytları) — eski gri-krem gradient yerine düz beyaz
+    # zemin + üstte koyu lacivert bir header bandı (logolar bandın üstünde
+    # kalıyor, konumlarına dokunulmuyor).
+    NAVY = RGBColor(0x1B, 0x24, 0x36)
+    for i in range(1, 9):
+        slide = slides[i]
+        slide.background.fill.solid()
+        slide.background.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.33), Inches(1.15))
+        band.fill.solid()
+        band.fill.fore_color.rgb = NAVY
+        band.line.fill.background()
+        band.shadow.inherit = False
+        band.text_frame.paragraphs[0].text = ""
+        # en arkaya gönder (logoların altına) — spTree'de ilk çocuk yap
+        sp_tree = band._element.getparent()
+        sp_tree.remove(band._element)
+        sp_tree.insert(2, band._element)  # ilk 2 eleman nvGrpSpPr/grpSpPr, sonrası shape'ler
+
+    # Layout seviyesindeki kalın turuncu alt bar -> ince lacivert çizgiye çeviriliyor
+    # (tüm slaytları tek noktadan etkiler).
+    layout = slides[1].slide_layout
+    for shp in layout.shapes:
+        if shp.name in ("Rectangle 4", "Rectangle 5"):
+            shp.fill.solid()
+            shp.fill.fore_color.rgb = NAVY
+    for shp in layout.shapes:
+        if shp.name == "Rectangle 4":
+            shp.top = Inches(7.42)
+            shp.height = Inches(0.06)
+        elif shp.name == "Rectangle 5":
+            shp.top = Inches(7.36)
+            shp.height = Inches(0.06)
 
     prs.save(out_path)
     print(f"Template saved -> {out_path}")

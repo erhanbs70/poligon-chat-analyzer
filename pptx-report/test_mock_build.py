@@ -19,6 +19,7 @@ mock_metrics = {
     "uniqueVisitors": 59215,
     "activeAgents": 24,
     "rated": 476,
+    "ratedPct": 8.67,
     "satisfaction": 4.06,
     "r5": 300, "r4": 100, "r3": 40, "r2": 20, "r1": 16,
     "lowRated": 36, "lowRatePct": 0.67,

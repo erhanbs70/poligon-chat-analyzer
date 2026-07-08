@@ -69,3 +69,4 @@ Tüm veri gerçek Comm100 reporting API'sinden geliyor, hiçbir tahmin/yaklaşı
 
 Slide 9 (email/call istatistikleri) hâlâ bu sürümde yok — o veri Comm100 dışında bir kaynaktan
 geliyor (muhtemelen Zendesk + call panel Sheets), kaynak netleşince eklenir.
+

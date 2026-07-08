@@ -210,17 +210,25 @@ def replace_picture(slide, shape_name, png_stream, left_in, top_in, width_in, he
 # Eski "- Total Chats: X" madde işaretli listesinin yerine geçiyor,
 # öneri #2: renkli, büyük rakamlı özet kartlar.
 # ============================================================
-def add_kpi_card(slide, x_in, y_in, w_in, h_in, value, label, bg_hex, text_hex):
+def add_kpi_card(slide, x_in, y_in, w_in, h_in, value, label, accent_hex):
+    # Kart gövdesi: nötr açık gri, köşeler hafif yuvarlak
     shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in), Inches(y_in), Inches(w_in), Inches(h_in))
-    shp.adjustments[0] = 0.12
+    shp.adjustments[0] = 0.10
     shp.fill.solid()
-    shp.fill.fore_color.rgb = RGBColor.from_string(bg_hex)
+    shp.fill.fore_color.rgb = RGBColor.from_string("F4F5F7")
     shp.line.fill.background()
     shp.shadow.inherit = False
 
+    # Sol renkli şerit (accent border) — ayrı, dar bir dikdörtgen
+    strip = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x_in), Inches(y_in), Inches(0.06), Inches(h_in))
+    strip.fill.solid()
+    strip.fill.fore_color.rgb = RGBColor.from_string(accent_hex)
+    strip.line.fill.background()
+    strip.shadow.inherit = False
+
     tf = shp.text_frame
     tf.word_wrap = True
-    tf.margin_left = Inches(0.06)
+    tf.margin_left = Inches(0.10)
     tf.margin_right = Inches(0.06)
     tf.margin_top = Inches(0.08)
     tf.margin_bottom = Inches(0.08)
@@ -231,27 +239,27 @@ def add_kpi_card(slide, x_in, y_in, w_in, h_in, value, label, bg_hex, text_hex):
     r_val.text = value
     r_val.font.size = Pt(20)
     r_val.font.bold = True
-    r_val.font.color.rgb = RGBColor.from_string(text_hex)
+    r_val.font.color.rgb = RGBColor.from_string("1A1A1A")
 
     p_lbl = tf.add_paragraph()
     p_lbl.alignment = PP_ALIGN.CENTER
     r_lbl = p_lbl.add_run()
     r_lbl.text = label
     r_lbl.font.size = Pt(9)
-    r_lbl.font.color.rgb = RGBColor.from_string(text_hex)
+    r_lbl.font.color.rgb = RGBColor.from_string("7A7A76")
     return shp
 
 
 def add_slide2_kpi_cards(slide, m):
     cards = [
-        (fmt_n(m["totalChats"]), "Total Chats", "E6F1FB", "0C447C"),
-        (fmt_pct(m["acceptancePct"]) + "%", "Success", "EAF3DE", "27500A"),
-        (fmt_n(m["missed"]), "Missed", "FCEBEB", "791F1F"),
+        (fmt_n(m["totalChats"]), "Total Chats", "1B2436"),
+        (fmt_pct(m["acceptancePct"]) + "%", "Success", "2E7D32"),
+        (fmt_n(m["missed"]), "Missed", "B23A32"),
     ]
     x, w = 10.75, 2.47
     y, h, gap = 1.52, 1.0, 0.15
-    for value, label, bg, fg in cards:
-        add_kpi_card(slide, x, y, w, h, value, label, bg, fg)
+    for value, label, accent in cards:
+        add_kpi_card(slide, x, y, w, h, value, label, accent)
         y += h + gap
 
 
