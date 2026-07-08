@@ -127,8 +127,8 @@ def build_hourly_volume_chart(hourly_dist, title="Chats by Hour", figsize=(10.63
 
 def build_brand_tag_donuts(brand_tag_map, figsize=(11.10, 2.98)):
     """Slide 8 — 3 marka için ayrı donut (orijinal deck'teki gibi).
-    Dar dikey alana (2.98") sığması için: en fazla 6 tag + "Diğer" grubu,
-    küçük ve kompakt legend."""
+    En fazla 6 tag + "Diğer" grubu, dikey alanı verimli kullanan büyük
+    donut + okunabilir legend."""
     fig, axes = plt.subplots(1, 3, figsize=figsize)
     order = ["betsat", "superbetin", "turkbet"]  # orijinal deck'teki soldan sağa sıralama
     max_slices = 6
@@ -144,12 +144,15 @@ def build_brand_tag_donuts(brand_tag_map, figsize=(11.10, 2.98)):
         if rest_sum > 0:
             labels.append("Diğer")
             values.append(rest_sum)
-        ax.pie(values, wedgeprops=dict(width=0.45), startangle=90,
+        ax.pie(values, wedgeprops=dict(width=0.42), startangle=90, radius=1.25,
                colors=plt.cm.tab20.colors[:len(values)])
-        ax.set_title(BRAND_LABELS[brand], fontsize=8, pad=2)
-        ax.legend(labels, loc="center left", bbox_to_anchor=(0.95, 0.5),
-                  fontsize=4.5, frameon=False, labelspacing=0.25, handlelength=1, handletextpad=0.4)
-    fig.tight_layout(pad=0.4, w_pad=2.2)
+        ax.set_title(BRAND_LABELS[brand], fontsize=11, pad=6, fontweight="bold")
+        ax.legend(labels, loc="center left", bbox_to_anchor=(0.88, 0.5),
+                  fontsize=6.5, frameon=False, labelspacing=0.4, handlelength=1, handletextpad=0.4)
+    # tight_layout yerine subplots_adjust: kenar boşluklarını elle sıfıra
+    # yakın tutup donut+legend'ın figürün NEREDEYSE TAMAMINI doldurmasını
+    # sağlıyoruz (önceki halde büyük beyaz boşluk kalıyordu).
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.84, bottom=0.03, wspace=0.55)
     return _save_png(fig, *figsize)
 
 
