@@ -703,6 +703,41 @@ def fetch_ai_action_usage(date_str):
     return float(total.get("usedAIReplies") or 0)
 
 
+def fetch_tag_breakdown_overall(date_str):
+    """Slide 8'in alt tablosu (genel Top 10 Tags) için — brand filtresi
+    olmadan, aynı Wrap-up reporting API'sinden. Ham chatWrapup.categoriesName
+    regex parse etmekten (tag_from_wrapup) çok daha güvenilir — o yöntem
+    bazı düz (parantezsiz) "VIP TIER3" gibi kategorileri kaçırıyordu."""
+    d = date_str.replace("-", "/")
+    payload = {
+        "cubeEntities": [{
+            "name": "Chat",
+            "fields": [
+                {"name": "count", "calculationType": "count", "valueType": "int", "fieldName": "Id",
+                 "conditionExpression": "Duration>0", "conditionMatchType": "all",
+                 "conditions": [{"name": "Duration>0", "fieldName": "Duration", "operate": "notEquals", "values": ["0"]}]},
+                {"name": "categoryOptionId", "calculationType": "originalValue", "valueType": "string", "fieldName": "ChatWrapupCategory.CategoryOptionId"},
+                {"name": "categoryOptionName", "calculationType": "originalValue", "valueType": "string", "fieldName": "ChatWrapupCategory.CategoryOption.Name"},
+            ],
+            "filters": [
+                {"fieldName": "RequestedTime", "matchType": "between", "value": [d, d]},
+                {"fieldName": "Duration", "matchType": "notEquals", "value": ["0"]},
+            ],
+            "rowGroups": [{"name": "optionId", "fieldName": "ChatWrapupCategory.CategoryOptionId", "isFull": False}],
+        }],
+        "mergeType": "row", "timezone": TZ,
+    }
+    resp = _report_query(payload)
+    series = resp.get("series") or []
+    tags = {}
+    for row in series:
+        name = row.get("categoryOptionName") or ""
+        if not name:
+            continue
+        tags[name] = tags.get(name, 0) + int(row.get("count") or 0)
+    return sorted(tags.items(), key=lambda kv: -kv[1])[:10]
+
+
 # ============================================================
 # MAIN METRICS BUILDER — combines raw chat history + reporting API
 # ============================================================
@@ -749,6 +784,7 @@ def build_metrics(date_str):
     hourly_all = fetch_hourly_volume_all(date_str)
     brand_tags = fetch_brand_tag_breakdown(date_str)
     action_usage = fetch_ai_action_usage(date_str)
+    overall_tags = fetch_tag_breakdown_overall(date_str)
 
     m = {}
     m["totalChats"] = api_core["totChats"] if api_core["totChats"] > 0 else len(chats)
@@ -802,7 +838,7 @@ def build_metrics(date_str):
     m["qReq"], m["qSrv"], m["qMax"] = api_core["qReq"], api_core["qSrv"], api_core["qMax"]
     m["avgChatsPerAgent"] = round(m["totalChats"] / m["activeAgents"]) if m["activeAgents"] > 0 else 0
 
-    m["topTags"] = sorted(tag_map.items(), key=lambda kv: -kv[1])[:10]
+    m["topTags"] = overall_tags  # reporting API'den (regex parse değil — Bug fix: VIP TIER3 kaçırılıyordu)
     m["topAgents"] = sorted(agent_names.items(), key=lambda kv: -kv[1])[:10]
 
     # Saatlik dağılım artık reporting API'den (served/missed/acceptance/visits

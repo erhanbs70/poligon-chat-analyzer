@@ -79,89 +79,107 @@ def _replace_in_shapes(shapes, tokens):
 # ============================================================
 # CHART GENERATION (matplotlib -> in-memory PNG)
 # ============================================================
-def _chart_png(fig, width_in, height_in):
-    fig.set_size_inches(width_in, height_in)
+def _save_png(fig, width_in, height_in):
+    """KRİTİK: figür zaten doğru width_in x height_in ile oluşturulmuş
+    olmalı (plt.subplots(figsize=(...))). Burada bbox_inches='tight'
+    KULLANMIYORUZ — çünkü o, içeriğe göre kırpma yapıp PNG'nin gerçek
+    piksel oranını figsize'dan saptırıyor, bu da PowerPoint'te görseli
+    slayt kutusuna sığdırırken dikey gerilip metnin "şişmiş/büyük"
+    görünmesine sebep oluyordu. Sabit boyutla kaydedince oran birebir
+    korunuyor, hiç gerilme olmuyor."""
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    fig.savefig(buf, format="png", dpi=150)
     plt.close(fig)
     buf.seek(0)
     return buf
 
 
-def build_hourly_volume_chart(hourly_dist, title="Chats by Hour"):
+def build_hourly_volume_chart(hourly_dist, title="Chats by Hour", figsize=(10.63, 3.57)):
     """Served (mavi) + Missed (kırmızı, üstte stack) bar + Acceptance Rate
     (yeşil çizgi, ikincil eksen) — orijinal Comm100 dashboard görünümüne
-    yakın, artık gerçek saatlik served/missed verisiyle."""
+    yakın, gerçek saatlik served/missed verisiyle."""
     hours = [f'{h["hour"]:02d}:00' for h in hourly_dist]
     served = [h.get("served", 0) for h in hourly_dist]
     missed = [h.get("missed", 0) for h in hourly_dist]
     acc = [h.get("acceptancePct", 0) for h in hourly_dist]
 
-    fig, ax1 = plt.subplots()
+    fig, ax1 = plt.subplots(figsize=figsize)
     ax1.bar(hours, served, color="#2E6DA4", label="Served")
     ax1.bar(hours, missed, bottom=served, color="#D9534F", label="Missed")
-    ax1.set_ylabel("Chats")
-    ax1.tick_params(axis="x", rotation=90, labelsize=7)
+    ax1.set_ylabel("Chats", fontsize=8)
+    ax1.tick_params(axis="x", rotation=90, labelsize=6)
+    ax1.tick_params(axis="y", labelsize=7)
 
     ax2 = ax1.twinx()
-    ax2.plot(hours, acc, color="#5CB85C", marker="o", markersize=3, linewidth=1.5, label="Acceptance %")
+    ax2.plot(hours, acc, color="#5CB85C", marker="o", markersize=2.5, linewidth=1.2, label="Acceptance %")
     ax2.set_ylim(0, 105)
-    ax2.set_ylabel("Acceptance %")
+    ax2.set_ylabel("Acceptance %", fontsize=8)
+    ax2.tick_params(axis="y", labelsize=7)
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=7)
-    ax1.set_title(title)
-    fig.tight_layout()
-    return _chart_png(fig, 10.63, 3.57)
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=6.5)
+    ax1.set_title(title, fontsize=10)
+    fig.tight_layout(pad=0.6)
+    return _save_png(fig, *figsize)
 
 
-def build_brand_tag_donuts(brand_tag_map):
+def build_brand_tag_donuts(brand_tag_map, figsize=(11.10, 2.98)):
     """Slide 8 — 3 marka için ayrı donut (orijinal deck'teki gibi).
-    brand_tag_map: {"superbetin": [(tag, count), ...], "betsat": [...], "turkbet": [...]}"""
-    fig, axes = plt.subplots(1, 3)
+    Dar dikey alana (2.98") sığması için: en fazla 6 tag + "Diğer" grubu,
+    küçük ve kompakt legend."""
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
     order = ["betsat", "superbetin", "turkbet"]  # orijinal deck'teki soldan sağa sıralama
+    max_slices = 6
     for ax, brand in zip(axes, order):
-        tags = brand_tag_map.get(brand, [])[:10]
+        tags = brand_tag_map.get(brand, [])
         if not tags:
             ax.axis("off")
             continue
-        labels = [t[0] for t in tags]
-        values = [t[1] for t in tags]
+        top = tags[:max_slices]
+        rest_sum = sum(c for _, c in tags[max_slices:])
+        labels = [t[0] for t in top]
+        values = [t[1] for t in top]
+        if rest_sum > 0:
+            labels.append("Diğer")
+            values.append(rest_sum)
         ax.pie(values, wedgeprops=dict(width=0.45), startangle=90,
                colors=plt.cm.tab20.colors[:len(values)])
-        ax.set_title(BRAND_LABELS[brand], fontsize=10)
-        ax.legend(labels, loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=6, frameon=False)
-    fig.tight_layout()
-    return _chart_png(fig, 11.10, 2.98)
+        ax.set_title(BRAND_LABELS[brand], fontsize=9, pad=2)
+        ax.legend(labels, loc="center left", bbox_to_anchor=(0.95, 0.5),
+                  fontsize=5.5, frameon=False, labelspacing=0.3, handlelength=1)
+    fig.tight_layout(pad=0.4, w_pad=2.2)
+    return _save_png(fig, *figsize)
 
 
-def build_top_tags_chart(top_tags):
+def build_top_tags_chart(top_tags, figsize=(11.10, 2.98)):
     """Genel (tüm markalar birleşik) Top 10 tag bar grafiği — artık
     build_brand_tag_donuts ile değiştirildiği için slide 8'de kullanılmıyor,
     ama başka bir yerde ihtiyaç olursa diye tutuluyor."""
     tags = [t[0] for t in top_tags][::-1]
     counts = [t[1] for t in top_tags][::-1]
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=figsize)
     ax.barh(tags, counts, color="#2E6DA4")
-    ax.set_title("Top 10 Chat Tags")
+    ax.set_title("Top 10 Chat Tags", fontsize=10)
+    ax.tick_params(axis="both", labelsize=7)
     for i, v in enumerate(counts):
-        ax.text(v, i, f" {v}", va="center", fontsize=8)
-    fig.tight_layout()
-    return _chart_png(fig, 11.10, 2.98)
+        ax.text(v, i, f" {v}", va="center", fontsize=7)
+    fig.tight_layout(pad=0.6)
+    return _save_png(fig, *figsize)
 
 
-def build_chatbot_chart(bot_only, bot_to_agent):
+def build_chatbot_chart(bot_only, bot_to_agent, figsize=(10.67, 3.67)):
     """Slide 4 — simple bot-only vs bot-to-agent comparison bar."""
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=figsize)
     labels = ["Chatbot Only", "Bot \u2192 Agent"]
     values = [bot_only, bot_to_agent]
-    ax.bar(labels, values, color=["#F2A93B", "#2E6DA4"])
+    ax.bar(labels, values, color=["#F2A93B", "#2E6DA4"], width=0.5)
     for i, v in enumerate(values):
         ax.text(i, v, fmt_n(v), ha="center", va="bottom", fontsize=9)
-    ax.set_title("Chatbot Volume")
-    fig.tight_layout()
-    return _chart_png(fig, 10.67, 3.67)
+    ax.set_title("Chatbot Volume", fontsize=10)
+    ax.tick_params(axis="both", labelsize=8)
+    fig.tight_layout(pad=0.6)
+    return _save_png(fig, *figsize)
 
 
 # ============================================================
@@ -230,7 +248,10 @@ def build_pptx(metrics, template_path, out_path, date_label):
         "{{S3_DURATION}}": fmt_min_sec(m["avgDuration"]),
         "{{S4_BOT_ONLY}}": fmt_n(m["botOnly"]),
         "{{S4_BOT_TO_AGENT}}": fmt_n(m["botToAgent"]),
-        "{{S4_BOT_PCT}}": fmt_pct(m["botVolumePct"]),
+        "{{S4_BOT_PCT}}": fmt_pct(
+            round(m["botOnly"] / (m["botOnly"] + m["botToAgent"]) * 100, 2)
+            if (m["botOnly"] + m["botToAgent"]) else 0
+        ),
         "{{S4_ACTION_USAGE}}": fmt_n(m["actionUsage"]),
         "{{S4_ACTION_PER_CHAT}}": f'{m["actionPerChat"]:.2f}'.replace(".", ","),
     }
@@ -245,7 +266,8 @@ def build_pptx(metrics, template_path, out_path, date_label):
         tokens[f"{{{{{prefix}_BOT_ONLY}}}}"] = fmt_n(d["botOnly"])
         tokens[f"{{{{{prefix}_BOT_TO_AGENT}}}}"] = fmt_n(d["botToAgent"])
         tokens[f"{{{{{prefix}_BOT_PCT}}}}"] = fmt_pct(
-            round(d["botOnly"] / d["total"] * 100, 2) if d["total"] else 0
+            round(d["botOnly"] / (d["botOnly"] + d["botToAgent"]) * 100, 2)
+            if (d["botOnly"] + d["botToAgent"]) else 0
         )
 
     # ---- Slide 2 hour boxes: en kötü 3 saat, artık tam veriyle ----
@@ -270,19 +292,25 @@ def build_pptx(metrics, template_path, out_path, date_label):
     fill_top_tags_table(prs.slides[7], m["topTags"])
 
     # ---- Charts ----
-    replace_picture(prs.slides[1], "Picture 5", build_hourly_volume_chart(m["hourlyDist"], "Chats by Hour"),
+    replace_picture(prs.slides[1], "Picture 5",
+                     build_hourly_volume_chart(m["hourlyDist"], "Chats by Hour", figsize=(10.63, 3.57)),
                      0.01, 1.52, 10.63, 3.57)
-    replace_picture(prs.slides[3], "Picture 8", build_chatbot_chart(m["botOnly"], m["botToAgent"]),
+    replace_picture(prs.slides[3], "Picture 8",
+                     build_chatbot_chart(m["botOnly"], m["botToAgent"], figsize=(10.67, 3.67)),
                      0.00, 1.90, 10.67, 3.67)
-    replace_picture(prs.slides[7], "Picture 4", build_brand_tag_donuts(m.get("brandTagMap", {})),
+    replace_picture(prs.slides[7], "Picture 4",
+                     build_brand_tag_donuts(m.get("brandTagMap", {}), figsize=(11.10, 2.98)),
                      0.85, 1.30, 11.10, 2.98)
 
     brand_hourly = m.get("brandHourly", {})
-    replace_picture(prs.slides[4], "Picture 10", build_hourly_volume_chart(brand_hourly.get("superbetin", []), "Superbetin — Chats by Hour"),
+    replace_picture(prs.slides[4], "Picture 10",
+                     build_hourly_volume_chart(brand_hourly.get("superbetin", []), "Superbetin — Chats by Hour", figsize=(10.71, 3.57)),
                      0.00, 1.37, 10.71, 3.57)
-    replace_picture(prs.slides[5], "Picture 4", build_hourly_volume_chart(brand_hourly.get("betsat", []), "Betsat — Chats by Hour"),
+    replace_picture(prs.slides[5], "Picture 4",
+                     build_hourly_volume_chart(brand_hourly.get("betsat", []), "Betsat — Chats by Hour", figsize=(10.47, 3.54)),
                      -0.00, 1.31, 10.47, 3.54)
-    replace_picture(prs.slides[6], "Picture 5", build_hourly_volume_chart(brand_hourly.get("turkbet", []), "Turkbet — Chats by Hour"),
+    replace_picture(prs.slides[6], "Picture 5",
+                     build_hourly_volume_chart(brand_hourly.get("turkbet", []), "Turkbet — Chats by Hour", figsize=(10.34, 3.50)),
                      0.00, 1.27, 10.34, 3.50)
 
     # ---- Slide 9 (email/call stats) dropped from this deck for now ----
