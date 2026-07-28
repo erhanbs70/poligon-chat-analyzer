@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # ============================================================
-# POLIGON COMM100 CHAT ANALYZER — v5
-# fix: sortOrder=desc + hedef tarih geçme mantığı düzeltildi
+# POLIGON COMM100 CHAT ANALYZER — v6
+# fix: parse_json hata loglama + Claude JSON prefill + Groq boş
+#      key guard + AI analizi başarısız olduğunda email'de görünür uyarı
 # ============================================================
 
 import os
@@ -442,6 +443,7 @@ def try_gemini(prompt):
                     }, timeout=60
                 )
                 if r.status_code in [429, 503]:
+                    print(f"[GEMINI] {model} key#{ki}: HTTP {r.status_code} (rate limit/kullanılamıyor)")
                     continue
                 if r.status_code == 200:
                     res   = r.json()
@@ -456,11 +458,20 @@ def try_gemini(prompt):
                         print(f"[AI] {model_name} — {in_t}+{out_t} token | ${cost:.6f}")
                         return {"success": True, "text": text, "model": model_name,
                                 "in_tokens": in_t, "out_tokens": out_t, "cost": cost}
+                    else:
+                        print(f"[GEMINI] {model} key#{ki}: HTTP 200 ama candidate boş döndü")
+                else:
+                    print(f"[GEMINI] {model} key#{ki}: HTTP {r.status_code}: {r.text[:200]}")
             except Exception as e:
                 print(f"[GEMINI] {model} key#{ki}: {e}")
     return {"success": False}
 
 def try_claude(prompt):
+    """
+    NOT: JSON prefill kullanılıyor — assistant mesajını "{" ile başlatarak
+    Claude'un yanıtın başına açıklama/markdown eklemesini engelliyoruz.
+    Böylece parse_json() daha güvenilir çalışıyor.
+    """
     try:
         r = requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -468,23 +479,31 @@ def try_claude(prompt):
                      "content-type": "application/json"},
             json={"model":      "claude-haiku-4-5-20251001",
                   "max_tokens": 8000,
-                  "messages":   [{"role": "user", "content": prompt}]},
+                  "messages":   [
+                      {"role": "user", "content": prompt},
+                      {"role": "assistant", "content": "{"}
+                  ]},
             timeout=60
         )
         if r.status_code == 200:
             res   = r.json()
-            text  = res["content"][0]["text"].strip()
+            text  = "{" + res["content"][0]["text"].strip()
             in_t  = res.get("usage", {}).get("input_tokens", 0)
             out_t = res.get("usage", {}).get("output_tokens", 0)
             cost  = (in_t * 0.25 / 1_000_000) + (out_t * 1.25 / 1_000_000)
             print(f"[AI] Claude Haiku — {in_t}+{out_t} token | ${cost:.6f}")
             return {"success": True, "text": text, "model": "Claude Haiku 4.5",
                     "in_tokens": in_t, "out_tokens": out_t, "cost": cost}
+        else:
+            print(f"[CLAUDE] HTTP {r.status_code}: {r.text[:200]}")
     except Exception as e:
         print(f"[CLAUDE] {e}")
     return {"success": False}
 
 def try_groq(prompt):
+    if not GROQ_KEYS:
+        print("[GROQ] GROQ_KEYS boş/tanımsız, atlanıyor")
+        return {"success": False}
     for i, key in enumerate(GROQ_KEYS):
         try:
             r = requests.post(
@@ -506,6 +525,8 @@ def try_groq(prompt):
                 print(f"[AI] Groq — {in_t}+{out_t} token | ${cost:.6f}")
                 return {"success": True, "text": text, "model": "Groq Llama-4 Scout",
                         "in_tokens": in_t, "out_tokens": out_t, "cost": cost}
+            else:
+                print(f"[GROQ] key#{i} HTTP {r.status_code}: {r.text[:200]}")
         except Exception as e:
             print(f"[GROQ] key#{i}: {e}")
     return {"success": False}
@@ -513,7 +534,8 @@ def try_groq(prompt):
 def parse_json(text):
     try:
         return json.loads(text.replace("```json", "").replace("```", "").strip())
-    except Exception:
+    except Exception as e:
+        print(f"[PARSE] Hata: {e} | text[:300]={text[:300]!r}")
         return None
 
 def analyze_with_ai(chat_texts, date_str):
@@ -531,6 +553,8 @@ def analyze_with_ai(chat_texts, date_str):
                          "out_tokens": result.get("out_tokens", 0),
                          "cost":       result.get("cost", 0)}
                 return data, result["model"], usage
+            else:
+                print(f"[AI] {result['model']} yanıt verdi ama JSON parse edilemedi, sıradaki modele geçiliyor")
     return None, "Hata", {}
 
 # ── HTML ──────────────────────────────────────────────────────
@@ -549,7 +573,7 @@ def brand_badge(brand):
     s = styles.get(brand, "background:#666;color:#fff;")
     return f'<span style="display:inline-block;padding:1px 6px;{s}border-radius:3px;font-size:10px;font-weight:700;font-family:Montserrat,Arial,sans-serif;">{brand}</span>'
 
-def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
+def build_html(ai_data, stats, date_str, model_used, ai_usage=None, ai_failed=False):
     total           = stats["total"]
     agent_count     = stats["agent_count"]
     bot_count       = stats["bot_count"]
@@ -656,7 +680,22 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None):
                 f'<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-top:3px solid #FFE600;border-radius:0 0 8px 8px;">{rows}</table>'
             )
 
-    no_data_html = '<p style="color:#B28ABF;font-size:13px;font-family:Montserrat,Arial,sans-serif;">Şikayet/sorun tespit edilemedi.</p>'
+    # ── AI analizi başarısız oldu mu, yoksa gerçekten şikayet yok mu ayrımı ──
+    if ai_failed:
+        no_data_html = (
+            '<table width="100%" cellpadding="0" cellspacing="0" '
+            'style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;">'
+            '<tr><td style="padding:14px 16px;">'
+            '<p style="margin:0;font-size:12px;font-weight:800;color:#B91C1C;'
+            'font-family:Montserrat,Arial,sans-serif;">⚠️ AI ANALİZİ BAŞARISIZ</p>'
+            f'<p style="margin:6px 0 0;font-size:11px;color:#991B1B;line-height:1.5;'
+            f'font-family:Montserrat,Arial,sans-serif;">Gemini, Claude ve Groq sırayla denendi, '
+            f'hiçbiri geçerli/parse edilebilir bir sonuç üretemedi. {complaint_count} şikayet tespit '
+            f'edildi ancak kategorize edilemedi — ham veriler Excel ekinde, GitHub Actions loglarını kontrol et.</p>'
+            '</td></tr></table>'
+        )
+    else:
+        no_data_html = '<p style="color:#B28ABF;font-size:13px;font-family:Montserrat,Arial,sans-serif;">Şikayet/sorun tespit edilemedi.</p>'
 
     if ai_usage and ai_usage.get("in_tokens"):
         u = ai_usage
@@ -1012,6 +1051,7 @@ def main():
           f"Bot:{stats['bot_count']} | Şikayet:{stats['complaint_count']}")
 
     ai_data, model_used, ai_usage = None, "—", {}
+    ai_failed = False
     if chat_texts:
         print(f"\n[AI] {len(chat_texts)} şikayet analiz ediliyor...")
         ai_data, model_used, ai_usage = analyze_with_ai(chat_texts, date_str)
@@ -1019,8 +1059,9 @@ def main():
             print(f"[AI] {len(ai_data.get('categories', []))} kategori ({model_used})")
         else:
             print("[AI] Analiz başarısız")
+            ai_failed = True
 
-    html = build_html(ai_data, stats, date_str, model_used, ai_usage)
+    html = build_html(ai_data, stats, date_str, model_used, ai_usage, ai_failed=ai_failed)
     send_email(html, date_str, stats, complaint_chats=complaint_chats, ai_data=ai_data)
     print(f"\n[DONE] Tamamlandı — {date_str}")
 
