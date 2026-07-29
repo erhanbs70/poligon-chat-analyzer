@@ -34,7 +34,7 @@ jobs:
           GROQ_KEYS:          ${{ secrets.GROQ_KEYS }}
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          REPORT_EMAILS:      ${{ secrets.REPORT_EMAILS }}
+          VIP_REPORT_EMAILS:  ${{ secrets.VIP_REPORT_EMAILS }}
           VIP_SPREADSHEET_ID: ${{ secrets.VIP_SPREADSHEET_ID }}
           GCP_CREDENTIALS:    ${{ secrets.GCP_CREDENTIALS }}
         run: python scripts/vip_qa_report.py "${{ github.event.inputs.date }}"
