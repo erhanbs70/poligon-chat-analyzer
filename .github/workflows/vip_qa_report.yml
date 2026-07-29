@@ -1,0 +1,40 @@
+name: VIP QA & AI Report
+on:
+  schedule:
+    # 05:10 UTC = 08:10 Sofia (yaz, UTC+3). Kışın (UTC+2) 07:10 Sofia olur —
+    # GH Actions cron DST'yi otomatik ayarlamıyor, GAS trigger'ın aksine.
+    # Kasım/Mart geçişlerinde istersen cron'u '10 6 * * *' olarak güncelleriz.
+    - cron: '10 5 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Rapor tarihi (YYYY-MM-DD). Boş bırakılırsa dün (Sofia)."
+        required: false
+        default: ""
+jobs:
+  vip-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python kurulum
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Bağımlılıkları kur
+        run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client
+      - name: VIP QA Raporu çalıştır
+        env:
+          MR_SITE_ID:         ${{ secrets.MR_SITE_ID }}
+          MR_API_KEY:         ${{ secrets.MR_API_KEY }}
+          MR_EMAIL:           ${{ secrets.MR_EMAIL }}
+          GEMINI_KEYS:        ${{ secrets.GEMINI_KEYS }}
+          CLAUDE_KEY:         ${{ secrets.CLAUDE_KEY }}
+          GROQ_KEYS:          ${{ secrets.GROQ_KEYS }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_EMAILS:      ${{ secrets.REPORT_EMAILS }}
+          VIP_SPREADSHEET_ID: ${{ secrets.VIP_SPREADSHEET_ID }}
+          GCP_CREDENTIALS:    ${{ secrets.GCP_CREDENTIALS }}
+        run: python scripts/vip_qa_report.py "${{ github.event.inputs.date }}"
