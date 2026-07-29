@@ -43,7 +43,7 @@ CLAUDE_KEY    = os.environ["CLAUDE_KEY"]
 GROQ_KEYS     = json.loads(os.environ["GROQ_KEYS"])
 GMAIL_USER    = os.environ["GMAIL_USER"]
 GMAIL_PASS    = os.environ["GMAIL_APP_PASSWORD"]
-REPORT_EMAILS = [e.strip() for e in os.environ["REPORT_EMAILS"].split(",")]
+REPORT_EMAILS = [e.strip() for e in os.environ["VIP_REPORT_EMAILS"].split(",")]
 
 # YENİ secret — bkz. teslimat notu. Boş bir Google Sheet ID'si yeterli,
 # "AI_LOGS" tab'ı otomatik oluşturulur.
