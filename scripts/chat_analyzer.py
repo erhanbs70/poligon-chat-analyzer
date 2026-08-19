@@ -424,7 +424,7 @@ Sadece JSON döndür:
 
 def try_gemini(prompt):
     global gemini_key_index
-    models = ["gemini-2.5-flash", "gemini-2.0-flash"]
+    models = ["gemini-2.5-flash", "gemini-3.6-flash"]
     for ki in range(len(GEMINI_KEYS)):
         key = GEMINI_KEYS[(gemini_key_index + ki) % len(GEMINI_KEYS)]
         for model in models:
@@ -451,7 +451,7 @@ def try_gemini(prompt):
                     if cands and cands[0].get("content"):
                         text = cands[0]["content"]["parts"][0]["text"].strip()
                         gemini_key_index = (gemini_key_index + ki + 1) % len(GEMINI_KEYS)
-                        model_name = "Gemini 2.5 Flash" if "2.5" in model else "Gemini 2.0 Flash"
+                        model_name = "Gemini 2.5 Flash" if "2.5" in model else "Gemini 3.6 Flash"
                         in_t  = res.get("usageMetadata", {}).get("promptTokenCount", 0)
                         out_t = res.get("usageMetadata", {}).get("candidatesTokenCount", 0)
                         cost  = (in_t * 0.075 / 1_000_000) + (out_t * 0.30 / 1_000_000)
@@ -595,50 +595,64 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None, ai_failed=Fa
 
     topics_html = ""
     if ai_data and ai_data.get("categories"):
-        cats = sorted(ai_data["categories"], key=lambda x: x.get("count", 0), reverse=True)
+        cats = sorted(ai_data["categories"], key=lambda x: x.get("count", 0) if isinstance(x, dict) else 0, reverse=True)
         for idx, cat in enumerate(cats):
-            cnt    = cat.get("count", 0)
-            lclr   = line_color(cnt)
-            border = "none" if idx == len(cats) - 1 else "1px solid #f0e8ff"
+            # NOT: AI çıktısı büyük ölçekli (20+ kategori) çalıştırmalarda ara sıra
+            # eksik/bozuk alanlarla geliyor (örn. brand_breakdown içinde "brand"
+            # anahtarı olmayan bir eleman). Tek bir bozuk kategori yüzünden tüm
+            # mailin gönderilmemesini engellemek için her kategoriyi ayrı try/except
+            # içinde render ediyoruz; bozuk olan atlanır, diğerleri normal basılır.
+            try:
+                if not isinstance(cat, dict):
+                    print(f"[HTML] Kategori {idx} dict değil, atlanıyor: {cat!r}")
+                    continue
 
-            bd_html = ""
-            if cat.get("brand_breakdown"):
-                items = "".join(
-                    f'<span style="display:inline-block;margin-right:8px;">'
-                    f'{brand_badge(bd["brand"])}'
-                    f'<strong style="font-size:12px;color:#662D91;margin-left:3px;font-family:Montserrat,Arial,sans-serif;">{bd["count"]}</strong>'
-                    f'</span>'
-                    for bd in cat["brand_breakdown"]
-                )
-                bd_html = (
-                    f'<div style="margin:5px 0;">'
-                    f'<span style="font-size:9px;font-weight:700;color:#7c3aed;text-transform:uppercase;'
-                    f'letter-spacing:.08em;font-family:Montserrat,Arial,sans-serif;">Marka: </span>{items}'
-                    f'</div>'
-                )
+                cnt    = cat.get("count", 0)
+                lclr   = line_color(cnt)
+                border = "none" if idx == len(cats) - 1 else "1px solid #f0e8ff"
 
-            note_html = ""
-            if cat.get("short_note"):
-                note_html = (
-                    f'<p style="margin:6px 0 0;font-size:11px;color:#662D91;font-style:italic;'
-                    f'font-family:Montserrat,Arial,sans-serif;line-height:1.5;">{cat["short_note"]}</p>'
-                )
+                bd_html = ""
+                bd_list = cat.get("brand_breakdown")
+                if bd_list:
+                    items = "".join(
+                        f'<span style="display:inline-block;margin-right:8px;">'
+                        f'{brand_badge(bd.get("brand", "?") if isinstance(bd, dict) else "?")}'
+                        f'<strong style="font-size:12px;color:#662D91;margin-left:3px;font-family:Montserrat,Arial,sans-serif;">{bd.get("count", 0) if isinstance(bd, dict) else 0}</strong>'
+                        f'</span>'
+                        for bd in bd_list
+                    )
+                    bd_html = (
+                        f'<div style="margin:5px 0;">'
+                        f'<span style="font-size:9px;font-weight:700;color:#7c3aed;text-transform:uppercase;'
+                        f'letter-spacing:.08em;font-family:Montserrat,Arial,sans-serif;">Marka: </span>{items}'
+                        f'</div>'
+                    )
 
-            topics_html += f'''
-            <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:{border};">
-              <tr>
-                <td style="width:4px;background-color:{lclr};font-size:0;" bgcolor="{lclr}">&nbsp;</td>
-                <td style="padding:14px 16px;background-color:#ffffff;">
-                  <table width="100%" cellpadding="0" cellspacing="0"><tr>
-                    <td><span style="font-size:13px;font-weight:700;color:#2F1555;font-family:Montserrat,Arial,sans-serif;">{cat.get("name","Konu")}</span></td>
-                    <td style="text-align:right;white-space:nowrap;">
-                      <span style="font-size:26px;font-weight:800;color:{lclr};line-height:1;font-family:Montserrat,Arial,sans-serif;">{cnt}</span>
+                note_html = ""
+                if cat.get("short_note"):
+                    note_html = (
+                        f'<p style="margin:6px 0 0;font-size:11px;color:#662D91;font-style:italic;'
+                        f'font-family:Montserrat,Arial,sans-serif;line-height:1.5;">{cat["short_note"]}</p>'
+                    )
+
+                topics_html += f'''
+                <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:{border};">
+                  <tr>
+                    <td style="width:4px;background-color:{lclr};font-size:0;" bgcolor="{lclr}">&nbsp;</td>
+                    <td style="padding:14px 16px;background-color:#ffffff;">
+                      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+                        <td><span style="font-size:13px;font-weight:700;color:#2F1555;font-family:Montserrat,Arial,sans-serif;">{cat.get("name","Konu")}</span></td>
+                        <td style="text-align:right;white-space:nowrap;">
+                          <span style="font-size:26px;font-weight:800;color:{lclr};line-height:1;font-family:Montserrat,Arial,sans-serif;">{cnt}</span>
+                        </td>
+                      </tr></table>
+                      {bd_html}{note_html}
                     </td>
-                  </tr></table>
-                  {bd_html}{note_html}
-                </td>
-              </tr>
-            </table>'''
+                  </tr>
+                </table>'''
+            except Exception as e:
+                print(f"[HTML] Kategori {idx} render edilirken hata, atlanıyor: {e} | cat={cat!r}")
+                continue
 
     summary_html = ""
     if ai_data and ai_data.get("summary"):
@@ -664,17 +678,24 @@ def build_html(ai_data, stats, date_str, model_used, ai_usage=None, ai_failed=Fa
         if crits:
             rows = ""
             for u in crits:
-                bt_styles = {"SB": "background:#1d4ed8;color:#fff;",
-                             "BS": "background:#FFE600;color:#2F1555;",
-                             "TB": "background:#E30613;color:#fff;"}
-                bs = bt_styles.get(u.get("brand",""), "background:#666;color:#fff;")
-                rows += (
-                    f'<tr style="border-bottom:1px solid #f0e8ff;">'
-                    f'<td style="padding:9px 14px;white-space:nowrap;font-size:13px;font-weight:700;color:#2F1555;font-family:Montserrat,Arial,sans-serif;">{u.get("username","-")}</td>'
-                    f'<td style="padding:9px 14px;"><span style="display:inline-block;padding:1px 7px;{bs}border-radius:3px;font-size:10px;font-weight:700;">{u.get("brand","-")}</span></td>'
-                    f'<td style="padding:9px 14px;font-size:12px;color:#662D91;line-height:1.5;font-family:Montserrat,Arial,sans-serif;">{u.get("reason","-")}</td>'
-                    f'</tr>'
-                )
+                if not isinstance(u, dict):
+                    print(f"[HTML] Kritik kullanıcı kaydı dict değil, atlanıyor: {u!r}")
+                    continue
+                try:
+                    bt_styles = {"SB": "background:#1d4ed8;color:#fff;",
+                                 "BS": "background:#FFE600;color:#2F1555;",
+                                 "TB": "background:#E30613;color:#fff;"}
+                    bs = bt_styles.get(u.get("brand",""), "background:#666;color:#fff;")
+                    rows += (
+                        f'<tr style="border-bottom:1px solid #f0e8ff;">'
+                        f'<td style="padding:9px 14px;white-space:nowrap;font-size:13px;font-weight:700;color:#2F1555;font-family:Montserrat,Arial,sans-serif;">{u.get("username","-")}</td>'
+                        f'<td style="padding:9px 14px;"><span style="display:inline-block;padding:1px 7px;{bs}border-radius:3px;font-size:10px;font-weight:700;">{u.get("brand","-")}</span></td>'
+                        f'<td style="padding:9px 14px;font-size:12px;color:#662D91;line-height:1.5;font-family:Montserrat,Arial,sans-serif;">{u.get("reason","-")}</td>'
+                        f'</tr>'
+                    )
+                except Exception as e:
+                    print(f"[HTML] Kritik kullanıcı render hatası, atlanıyor: {e} | u={u!r}")
+                    continue
             critical_html = (
                 f'<p style="margin:22px 0 10px;font-size:11px;font-weight:800;color:#2F1555;text-transform:uppercase;letter-spacing:.12em;font-family:Montserrat,Arial,sans-serif;">🚨 Kritik Kullanıcılar</p>'
                 f'<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9d5ff;border-top:3px solid #FFE600;border-radius:0 0 8px 8px;">{rows}</table>'
@@ -864,7 +885,7 @@ def build_excel(complaint_chats, date_str, ai_data=None):
 
     # ── SEKME 2: AI Kategori Grupları ──
     if ai_data and ai_data.get("categories"):
-        cats = sorted(ai_data["categories"], key=lambda x: x.get("count", 0), reverse=True)
+        cats = sorted(ai_data["categories"], key=lambda x: x.get("count", 0) if isinstance(x, dict) else 0, reverse=True)
         ws2  = wb.create_sheet(title="Kategori Grupları")
 
         ws2_cols   = ["Kategori", "Brand", "Kullanıcı Adı", "Tag", "Rating", "Yorum", "Tarih", "Chat Linki"]
@@ -912,6 +933,9 @@ def build_excel(complaint_chats, date_str, ai_data=None):
         ]
 
         for cat_idx, cat in enumerate(cats):
+            if not isinstance(cat, dict):
+                print(f"[EXCEL] Kategori {cat_idx} dict değil, atlanıyor: {cat!r}")
+                continue
             cat_name  = cat.get("name", "")
             kws       = cat_keywords(cat_name)
             matched   = []
@@ -1005,7 +1029,11 @@ def send_email(html, date_str, stats, complaint_chats=None, ai_data=None):
     msg.attach(alt)
 
     if complaint_chats:
-        xlsx_bytes = build_excel(complaint_chats, date_str, ai_data=ai_data)
+        try:
+            xlsx_bytes = build_excel(complaint_chats, date_str, ai_data=ai_data)
+        except Exception as e:
+            print(f"[EMAIL] Excel oluşturulurken hata, ek olmadan devam ediliyor: {e}")
+            xlsx_bytes = None
         if xlsx_bytes:
             attachment = MIMEBase("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             attachment.set_payload(xlsx_bytes)
@@ -1061,7 +1089,11 @@ def main():
             print("[AI] Analiz başarısız")
             ai_failed = True
 
-    html = build_html(ai_data, stats, date_str, model_used, ai_usage, ai_failed=ai_failed)
+    try:
+        html = build_html(ai_data, stats, date_str, model_used, ai_usage, ai_failed=ai_failed)
+    except Exception as e:
+        print(f"[MAIN] build_html beklenmedik şekilde patladı, güvenli fallback'e geçiliyor: {e}")
+        html = build_html(None, stats, date_str, "Hata", {}, ai_failed=True)
     send_email(html, date_str, stats, complaint_chats=complaint_chats, ai_data=ai_data)
     print(f"\n[DONE] Tamamlandı — {date_str}")
 
