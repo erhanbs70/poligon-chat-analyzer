@@ -1,0 +1,77 @@
+name: Feedback AI Report — Daily
+on:
+  schedule:
+    # Sofya 08:30 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 05:30 UTC
+    - cron: '30 5 * 4-10 *'
+    # Sofya 09:30 (yedek/retry) — yaz saati: 06:30 UTC
+    - cron: '30 6 * 4-10 *'
+    # Sofya 08:30 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 06:30 UTC
+    - cron: '30 6 * 11,12,1,2,3 *'
+    # Sofya 09:30 (yedek/retry) — kış saati: 07:30 UTC
+    - cron: '30 7 * 11,12,1,2,3 *'
+  workflow_dispatch:        # Manuel çalıştırma butonu — her zaman çalışır, atlanmaz
+permissions:
+  contents: read
+  actions: read            # gh run list için gerekli
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Bugün zaten başarılı bir run var mı kontrol et
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Manuel tetikleme — doğrudan çalışacak."
+            exit 0
+          fi
+
+          TODAY_SOFIA=$(TZ="Europe/Sofia" date +%F)
+          LATEST_SUCCESS_AT=$(gh run list \
+            --workflow "${{ github.workflow }}" \
+            --status success \
+            --event schedule \
+            --limit 5 \
+            --json createdAt \
+            --jq '.[0].createdAt // empty')
+
+          if [ -n "$LATEST_SUCCESS_AT" ]; then
+            LATEST_SUCCESS_SOFIA_DATE=$(TZ="Europe/Sofia" date -d "$LATEST_SUCCESS_AT" +%F)
+            if [ "$LATEST_SUCCESS_SOFIA_DATE" = "$TODAY_SOFIA" ]; then
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "Bugün ($TODAY_SOFIA) zaten başarılı bir run var ($LATEST_SUCCESS_AT) — bu tetikleme atlanıyor."
+              exit 0
+            fi
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "Bugün ($TODAY_SOFIA) henüz başarılı run yok — çalışacak."
+  report:
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python kurulum
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Bağımlılıkları kur
+        run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client python-docx
+      - name: Feedback Raporu çalıştır (daily)
+        env:
+          SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
+          GCP_CREDENTIALS:    ${{ secrets.GCP_CREDENTIALS }}
+          GEMINI_KEYS:        ${{ secrets.GEMINI_KEYS }}
+          CLAUDE_KEY:         ${{ secrets.CLAUDE_KEY }}
+          GROQ_KEYS:          ${{ secrets.GROQ_KEYS }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_EMAILS:      ${{ secrets.REPORT_EMAILS }}
+        run: python scripts/feedback_report.py daily
