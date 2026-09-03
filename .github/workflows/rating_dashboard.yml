@@ -1,39 +1,79 @@
 name: Rating Dashboard
-
 on:
   schedule:
-    # Her gün 06:00 Sofia = 03:00 UTC yaz (UTC+3)
-    - cron: '0 3 * * *'
+    # Sofya 07:00 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 04:00 UTC
+    - cron: '0 4 * 4-10 *'
+    # Sofya 08:00 (yedek/retry) — yaz saati: 05:00 UTC
+    - cron: '0 5 * 4-10 *'
+    # Sofya 07:00 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 05:00 UTC
+    - cron: '0 5 * 11,12,1,2,3 *'
+    # Sofya 08:00 (yedek/retry) — kış saati: 06:00 UTC
+    - cron: '0 6 * 11,12,1,2,3 *'
   workflow_dispatch:
     inputs:
       mode:
         description: 'daily veya weekly (weekly = haftalık raporu zorla çalıştır)'
         required: false
         default: 'daily'
-
+permissions:
+  contents: read
+  actions: read            # gh run list için gerekli
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Bugün zaten başarılı bir run var mı kontrol et
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Manuel tetikleme — doğrudan çalışacak."
+            exit 0
+          fi
+
+          TODAY_SOFIA=$(TZ="Europe/Sofia" date +%F)
+          LATEST_SUCCESS_AT=$(gh run list \
+            --workflow "${{ github.workflow }}" \
+            --status success \
+            --event schedule \
+            --limit 5 \
+            --json createdAt \
+            --jq '.[0].createdAt // empty')
+
+          if [ -n "$LATEST_SUCCESS_AT" ]; then
+            LATEST_SUCCESS_SOFIA_DATE=$(TZ="Europe/Sofia" date -d "$LATEST_SUCCESS_AT" +%F)
+            if [ "$LATEST_SUCCESS_SOFIA_DATE" = "$TODAY_SOFIA" ]; then
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "Bugün ($TODAY_SOFIA) zaten başarılı bir run var ($LATEST_SUCCESS_AT) — bu tetikleme atlanıyor."
+              exit 0
+            fi
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "Bugün ($TODAY_SOFIA) henüz başarılı run yok — çalışacak."
   dashboard:
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Python kurulum
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Bağımlılıkları kur
         run: pip install requests pytz google-auth google-auth-httplib2 google-api-python-client
-
       - name: Modu belirle
         id: mode
         run: |
           INPUT="${{ github.event.inputs.mode }}"
           echo "mode=${INPUT:-daily}" >> $GITHUB_OUTPUT
-
       - name: Rating Dashboard çalıştır
         env:
           COMM100_SITE_ID:       ${{ secrets.COMM100_SITE_ID }}
