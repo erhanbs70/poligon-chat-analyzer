@@ -1,27 +1,72 @@
 name: Poligon Chat Analyzer
-
 on:
   schedule:
-    - cron: '30 6 * * *'  # Her gün 08:30 Sofia (06:30 UTC yaz / 07:30 UTC kış)
-  workflow_dispatch:        # Manuel çalıştırma butonu
-
+    # Sofya 06:00 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 03:00 UTC
+    - cron: '0 3 * 4-10 *'
+    # Sofya 07:00 (yedek/retry) — yaz saati: 04:00 UTC
+    - cron: '0 4 * 4-10 *'
+    # Sofya 06:00 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 04:00 UTC
+    - cron: '0 4 * 11,12,1,2,3 *'
+    # Sofya 07:00 (yedek/retry) — kış saati: 05:00 UTC
+    - cron: '0 5 * 11,12,1,2,3 *'
+  workflow_dispatch:        # Manuel çalıştırma butonu — her zaman çalışır, atlanmaz
+permissions:
+  contents: read
+  actions: read            # gh run list için gerekli
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Bugün zaten başarılı bir run var mı kontrol et
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Manuel tetiklemede (workflow_dispatch) hiçbir zaman atlama —
+          # sadece zamanlanmış (schedule) tetiklemelerde "bugün zaten
+          # başarılı oldu mu" kontrolü yapılır.
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Manuel tetikleme — doğrudan çalışacak."
+            exit 0
+          fi
+
+          TODAY_SOFIA=$(TZ="Europe/Sofia" date +%F)
+          LATEST_SUCCESS_AT=$(gh run list \
+            --workflow "${{ github.workflow }}" \
+            --status success \
+            --event schedule \
+            --limit 5 \
+            --json createdAt \
+            --jq '.[0].createdAt // empty')
+
+          if [ -n "$LATEST_SUCCESS_AT" ]; then
+            LATEST_SUCCESS_SOFIA_DATE=$(TZ="Europe/Sofia" date -d "$LATEST_SUCCESS_AT" +%F)
+            if [ "$LATEST_SUCCESS_SOFIA_DATE" = "$TODAY_SOFIA" ]; then
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "Bugün ($TODAY_SOFIA) zaten başarılı bir run var ($LATEST_SUCCESS_AT) — bu tetikleme atlanıyor."
+              exit 0
+            fi
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "Bugün ($TODAY_SOFIA) henüz başarılı run yok — çalışacak."
   analyze:
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Python kurulum
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Bağımlılıkları kur
         run: pip install requests pytz openpyxl
-
       - name: Chat Analyzer çalıştır
         env:
           COMM100_SITE_ID:    ${{ secrets.COMM100_SITE_ID }}
