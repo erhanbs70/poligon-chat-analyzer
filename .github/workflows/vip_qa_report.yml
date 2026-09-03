@@ -1,18 +1,63 @@
 name: VIP QA & AI Report
 on:
   schedule:
-    # 05:10 UTC = 08:10 Sofia (yaz, UTC+3). Kışın (UTC+2) 07:10 Sofia olur —
-    # GH Actions cron DST'yi otomatik ayarlamıyor, GAS trigger'ın aksine.
-    # Kasım/Mart geçişlerinde istersen cron'u '10 6 * * *' olarak güncelleriz.
-    - cron: '10 5 * * *'
+    # Sofya 11:30 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 08:30 UTC
+    - cron: '30 8 * 4-10 *'
+    # Sofya 12:30 (yedek/retry) — yaz saati: 09:30 UTC
+    - cron: '30 9 * 4-10 *'
+    # Sofya 11:30 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 09:30 UTC
+    - cron: '30 9 * 11,12,1,2,3 *'
+    # Sofya 12:30 (yedek/retry) — kış saati: 10:30 UTC
+    - cron: '30 10 * 11,12,1,2,3 *'
   workflow_dispatch:
     inputs:
       date:
         description: "Rapor tarihi (YYYY-MM-DD). Boş bırakılırsa dün (Sofia)."
         required: false
         default: ""
+permissions:
+  contents: read
+  actions: read            # gh run list için gerekli
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Bugün zaten başarılı bir run var mı kontrol et
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Manuel tetikleme — doğrudan çalışacak."
+            exit 0
+          fi
+
+          TODAY_SOFIA=$(TZ="Europe/Sofia" date +%F)
+          LATEST_SUCCESS_AT=$(gh run list \
+            --workflow "${{ github.workflow }}" \
+            --status success \
+            --event schedule \
+            --limit 5 \
+            --json createdAt \
+            --jq '.[0].createdAt // empty')
+
+          if [ -n "$LATEST_SUCCESS_AT" ]; then
+            LATEST_SUCCESS_SOFIA_DATE=$(TZ="Europe/Sofia" date -d "$LATEST_SUCCESS_AT" +%F)
+            if [ "$LATEST_SUCCESS_SOFIA_DATE" = "$TODAY_SOFIA" ]; then
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "Bugün ($TODAY_SOFIA) zaten başarılı bir run var ($LATEST_SUCCESS_AT) — bu tetikleme atlanıyor."
+              exit 0
+            fi
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "Bugün ($TODAY_SOFIA) henüz başarılı run yok — çalışacak."
   vip-report:
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
