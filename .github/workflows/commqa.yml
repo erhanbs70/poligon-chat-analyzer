@@ -1,14 +1,19 @@
 name: CommQA — Rating & Tag Sheets
 on:
   schedule:
-    # Sofya 04:30 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 01:30 UTC
-    - cron: '30 1 * 4-10 *'
-    # Sofya 05:30 (yedek/retry) — yaz saati: 02:30 UTC
-    - cron: '30 2 * 4-10 *'
-    # Sofya 04:30 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 02:30 UTC
-    - cron: '30 2 * 11,12,1,2,3 *'
-    # Sofya 05:30 (yedek/retry) — kış saati: 03:30 UTC
-    - cron: '30 3 * 11,12,1,2,3 *'
+    # Sofya 04:07 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 01:07 UTC
+    # NOT (4 Eyl 2026): dakika 30'dan 07'ye kaydırıldı — GitHub Actions
+    # resmi dokümantasyonu, saatin yuvarlak dakikalarında (00/15/30/45)
+    # yoğunluk yüzünden scheduled run'ların saatlerce gecikebileceğini
+    # belirtiyor. Bu repo'daki geçmiş run'lar (07:46, 10:27, 11:08, 10:32
+    # gibi hedeften saatlerce sapan saatler) tam bu paterni gösteriyordu.
+    - cron: '7 1 * 4-10 *'
+    # Sofya 05:07 (yedek/retry) — yaz saati: 02:07 UTC
+    - cron: '7 2 * 4-10 *'
+    # Sofya 04:07 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 02:07 UTC
+    - cron: '7 2 * 11,12,1,2,3 *'
+    # Sofya 05:07 (yedek/retry) — kış saati: 03:07 UTC
+    - cron: '7 3 * 11,12,1,2,3 *'
   workflow_dispatch:          # Manuel çalıştırma butonu — her zaman çalışır, atlanmaz
 permissions:
   contents: read
@@ -23,16 +28,17 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          # DÜZELTME (4 Eyl 2026): bu job'da actions/checkout YOK, yani
+          # çalışma dizininde .git yok — GH_REPO olmadan `gh run list`
+          # hangi repo'da olduğunu bulamıyor ("not a git repository"
+          # hatasıyla başarısız oluyordu, run #88'de görüldü).
+          GH_REPO: ${{ github.repository }}
         run: |
-          # Manuel tetiklemede (workflow_dispatch) hiçbir zaman atlama —
-          # sadece zamanlanmış (schedule) tetiklemelerde "bugün zaten
-          # başarılı oldu mu" kontrolü yapılır.
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "Manuel tetikleme — doğrudan çalışacak."
             exit 0
           fi
-
           TODAY_SOFIA=$(TZ="Europe/Sofia" date +%F)
           LATEST_SUCCESS_AT=$(gh run list \
             --workflow "${{ github.workflow }}" \
@@ -41,7 +47,6 @@ jobs:
             --limit 5 \
             --json createdAt \
             --jq '.[0].createdAt // empty')
-
           if [ -n "$LATEST_SUCCESS_AT" ]; then
             LATEST_SUCCESS_SOFIA_DATE=$(TZ="Europe/Sofia" date -d "$LATEST_SUCCESS_AT" +%F)
             if [ "$LATEST_SUCCESS_SOFIA_DATE" = "$TODAY_SOFIA" ]; then
@@ -50,7 +55,6 @@ jobs:
               exit 0
             fi
           fi
-
           echo "should_run=true" >> "$GITHUB_OUTPUT"
           echo "Bugün ($TODAY_SOFIA) henüz başarılı run yok — çalışacak."
   commqa:
