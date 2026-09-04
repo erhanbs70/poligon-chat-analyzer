@@ -1,14 +1,18 @@
 name: Feedback AI Report — Daily
 on:
   schedule:
-    # Sofya 08:30 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 05:30 UTC
-    - cron: '30 5 * 4-10 *'
-    # Sofya 09:30 (yedek/retry) — yaz saati: 06:30 UTC
-    - cron: '30 6 * 4-10 *'
-    # Sofya 08:30 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 06:30 UTC
-    - cron: '30 6 * 11,12,1,2,3 *'
-    # Sofya 09:30 (yedek/retry) — kış saati: 07:30 UTC
-    - cron: '30 7 * 11,12,1,2,3 *'
+    # Sofya 08:36 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 05:36 UTC
+    # NOT (4 Eyl 2026): dakika 30'dan 36'ya kaydırıldı — GitHub Actions
+    # saatin yuvarlak dakikalarında (00/15/30/45) yoğunluk yüzünden
+    # scheduled run'ları saatlerce geciktirebiliyor, resmi tavsiyeleri
+    # garip/yuvarlak-olmayan bir dakika kullanmak.
+    - cron: '36 5 * 4-10 *'
+    # Sofya 09:36 (yedek/retry) — yaz saati: 06:36 UTC
+    - cron: '36 6 * 4-10 *'
+    # Sofya 08:36 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 06:36 UTC
+    - cron: '36 6 * 11,12,1,2,3 *'
+    # Sofya 09:36 (yedek/retry) — kış saati: 07:36 UTC
+    - cron: '36 7 * 11,12,1,2,3 *'
   workflow_dispatch:        # Manuel çalıştırma butonu — her zaman çalışır, atlanmaz
 permissions:
   contents: read
@@ -23,13 +27,17 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          # DÜZELTME (4 Eyl 2026): bu job'da actions/checkout YOK, yani
+          # çalışma dizininde .git yok — GH_REPO olmadan `gh run list`
+          # hangi repo'da olduğunu bulamıyor ("not a git repository"
+          # hatasıyla başarısız oluyordu, run #88'de görüldü).
+          GH_REPO: ${{ github.repository }}
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "Manuel tetikleme — doğrudan çalışacak."
             exit 0
           fi
-
           TODAY_SOFIA=$(TZ="Europe/Sofia" date +%F)
           LATEST_SUCCESS_AT=$(gh run list \
             --workflow "${{ github.workflow }}" \
@@ -38,7 +46,6 @@ jobs:
             --limit 5 \
             --json createdAt \
             --jq '.[0].createdAt // empty')
-
           if [ -n "$LATEST_SUCCESS_AT" ]; then
             LATEST_SUCCESS_SOFIA_DATE=$(TZ="Europe/Sofia" date -d "$LATEST_SUCCESS_AT" +%F)
             if [ "$LATEST_SUCCESS_SOFIA_DATE" = "$TODAY_SOFIA" ]; then
@@ -47,7 +54,6 @@ jobs:
               exit 0
             fi
           fi
-
           echo "should_run=true" >> "$GITHUB_OUTPUT"
           echo "Bugün ($TODAY_SOFIA) henüz başarılı run yok — çalışacak."
   report:
