@@ -6,6 +6,7 @@
 # v2: mergeCells kaldırıldı (clear sonrası merge hatası fix)
 #     batch format optimize — satır başına tek request yerine
 #     renk gruplarına göre toplu request
+# v3: MAX_PAGES 40 -> 70 (18k+ chat'lik günlerde eksik tarama fix)
 # ============================================================
 
 import os
@@ -265,6 +266,7 @@ def fetch_all_chats(date_str):
     result = []
     seen   = set()
     page   = 1
+    MAX_PAGES = 70  # güvenlik tavanı — 18k+ chat'lik günlerde bile geniş pay bırakır
     base   = (
         f"https://dash15.lively-chat.com/api/LiveChat/chats:search"
         f"?siteId={SITE_ID}"
@@ -276,7 +278,7 @@ def fetch_all_chats(date_str):
     _target_tz = _pytz.timezone("Europe/Sofia")
 
     print(f"[FETCH] {date_str} chatleri çekiliyor...")
-    while page <= 40:
+    while page <= MAX_PAGES:
         url = f"{base}&pageIndex={page}&pageSize=500"
         try:
             r = requests.post(
@@ -325,6 +327,10 @@ def fetch_all_chats(date_str):
             time.sleep(0.3)
         except Exception as e:
             raise RuntimeError(f"fetch_all_chats sayfa {page}: {e}") from e
+    else:
+        # while koşulu (page <= MAX_PAGES) doğal olarak yanlış olunca çalışır —
+        # yani break ile değil, limite gerçekten çarparak çıkıldıysa buraya düşer.
+        print(f"[FETCH] ⚠️ UYARI: {MAX_PAGES} sayfa limitine ulaşıldı — veri eksik kalmış olabilir!")
 
     print(f"[FETCH] Toplam {len(result)} chat çekildi")
     return result
