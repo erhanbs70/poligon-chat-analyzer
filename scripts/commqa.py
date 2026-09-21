@@ -44,9 +44,9 @@ QA_TAGS = [
     "casino_cashback_query",
     "sport_cashback_query",
     "deposit_issue",
-    "deposit_missing",
-    "betting_rules_query",
-    "deposit_query",
+    "fdb_query",
+    "social_media_bonus",
+    "casino_issue",
 ]
 VIP_TAGS = ["VIP TIER3", "VIP"]
 
