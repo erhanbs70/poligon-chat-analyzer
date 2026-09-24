@@ -7,6 +7,8 @@
 #     batch format optimize — satır başına tek request yerine
 #     renk gruplarına göre toplu request
 # v3: MAX_PAGES 40 -> 70 (18k+ chat'lik günlerde eksik tarama fix)
+# v4: QA_TAGS, QA panelindeki (.gs) güncel tag listesiyle senkronlandı
+#     (login_request, deposit_check, boosted_odds_query, fake_site eklendi)
 # ============================================================
 
 import os
@@ -47,6 +49,10 @@ QA_TAGS = [
     "fdb_query",
     "social_media_bonus",
     "casino_issue",
+    "login_request",
+    "deposit_check",
+    "boosted_odds_query",
+    "fake_site",
 ]
 VIP_TAGS = ["VIP TIER3", "VIP"]
 
