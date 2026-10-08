@@ -1,19 +1,18 @@
 name: CommQA — Rating & Tag Sheets
 on:
   schedule:
-    # Sofya 04:07 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 01:07 UTC
-    # NOT (4 Eyl 2026): dakika 30'dan 07'ye kaydırıldı — GitHub Actions
-    # resmi dokümantasyonu, saatin yuvarlak dakikalarında (00/15/30/45)
-    # yoğunluk yüzünden scheduled run'ların saatlerce gecikebileceğini
-    # belirtiyor. Bu repo'daki geçmiş run'lar (07:46, 10:27, 11:08, 10:32
-    # gibi hedeften saatlerce sapan saatler) tam bu paterni gösteriyordu.
-    - cron: '7 1 * 4-10 *'
-    # Sofya 05:07 (yedek/retry) — yaz saati: 02:07 UTC
-    - cron: '7 2 * 4-10 *'
-    # Sofya 04:07 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 02:07 UTC
-    - cron: '7 2 * 11,12,1,2,3 *'
-    # Sofya 05:07 (yedek/retry) — kış saati: 03:07 UTC
-    - cron: '7 3 * 11,12,1,2,3 *'
+    # Sofya 02:37 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 23:37 UTC (önceki gün)
+    # NOT (8 Eki 2026): run'lar Sofya saatiyle ~09:30'da çalışıyordu (GitHub Actions
+    # scheduled run gecikmesi). Tüm tetikleyiciler 1.5 saat geri çekildi
+    # (04:07 -> 02:37 / 05:07 -> 03:37). Dakika 37 — yuvarlak dakikalardan
+    # (00/15/30/45) kaçınma kuralı korundu.
+    - cron: '37 23 * 4-10 *'
+    # Sofya 03:37 (yedek/retry) — yaz saati: 00:37 UTC
+    - cron: '37 0 * 4-10 *'
+    # Sofya 02:37 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 00:37 UTC
+    - cron: '37 0 * 11,12,1,2,3 *'
+    # Sofya 03:37 (yedek/retry) — kış saati: 01:37 UTC
+    - cron: '37 1 * 11,12,1,2,3 *'
   workflow_dispatch:          # Manuel çalıştırma butonu — her zaman çalışır, atlanmaz
 permissions:
   contents: read
