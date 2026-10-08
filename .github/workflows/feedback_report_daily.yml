@@ -1,18 +1,18 @@
 name: Feedback AI Report — Daily
 on:
   schedule:
-    # Sofya 08:36 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 05:36 UTC
-    # NOT (4 Eyl 2026): dakika 30'dan 36'ya kaydırıldı — GitHub Actions
-    # saatin yuvarlak dakikalarında (00/15/30/45) yoğunluk yüzünden
-    # scheduled run'ları saatlerce geciktirebiliyor, resmi tavsiyeleri
-    # garip/yuvarlak-olmayan bir dakika kullanmak.
-    - cron: '36 5 * 4-10 *'
-    # Sofya 09:36 (yedek/retry) — yaz saati: 06:36 UTC
-    - cron: '36 6 * 4-10 *'
-    # Sofya 08:36 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 06:36 UTC
-    - cron: '36 6 * 11,12,1,2,3 *'
-    # Sofya 09:36 (yedek/retry) — kış saati: 07:36 UTC
-    - cron: '36 7 * 11,12,1,2,3 *'
+    # Sofya 07:18 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 04:18 UTC
+    # NOT (8 Eki 2026): tüm tetikleyiciler 78 dk geri çekildi
+    # (08:36 -> 07:18 / 09:36 -> 08:18). Dakika 18: yuvarlak dakikalardan
+    # (00/15/30/45) kaçınma kuralı korundu — GitHub Actions bu dakikalarda
+    # yoğunluk yüzünden scheduled run'ları saatlerce geciktirebiliyor.
+    - cron: '18 4 * 4-10 *'
+    # Sofya 08:18 (yedek/retry) — yaz saati: 05:18 UTC
+    - cron: '18 5 * 4-10 *'
+    # Sofya 07:18 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 05:18 UTC
+    - cron: '18 5 * 11,12,1,2,3 *'
+    # Sofya 08:18 (yedek/retry) — kış saati: 06:18 UTC
+    - cron: '18 6 * 11,12,1,2,3 *'
   workflow_dispatch:        # Manuel çalıştırma butonu — her zaman çalışır, atlanmaz
 permissions:
   contents: read
