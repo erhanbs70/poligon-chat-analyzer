@@ -1,18 +1,18 @@
 name: Rating Dashboard
 on:
   schedule:
-    # Sofya 07:21 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 04:21 UTC
-    # NOT (4 Eyl 2026): dakika 00'dan 21'e kaydırıldı — GitHub Actions
-    # saatin yuvarlak dakikalarında (00/15/30/45) yoğunluk yüzünden
-    # scheduled run'ları saatlerce geciktirebiliyor, resmi tavsiyeleri
-    # garip/yuvarlak-olmayan bir dakika kullanmak.
-    - cron: '21 4 * 4-10 *'
-    # Sofya 08:21 (yedek/retry) — yaz saati: 05:21 UTC
-    - cron: '21 5 * 4-10 *'
-    # Sofya 07:21 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 05:21 UTC
-    - cron: '21 5 * 11,12,1,2,3 *'
-    # Sofya 08:21 (yedek/retry) — kış saati: 06:21 UTC
-    - cron: '21 6 * 11,12,1,2,3 *'
+    # Sofya 05:51 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 02:51 UTC
+    # NOT (8 Eki 2026): tüm tetikleyiciler 1.5 saat geri çekildi
+    # (07:21 -> 05:51 / 08:21 -> 06:51). Dakika 51: yuvarlak dakikalardan
+    # (00/15/30/45) kaçınma kuralı korundu — GitHub Actions bu dakikalarda
+    # yoğunluk yüzünden scheduled run'ları saatlerce geciktirebiliyor.
+    - cron: '51 2 * 4-10 *'
+    # Sofya 06:51 (yedek/retry) — yaz saati: 03:51 UTC
+    - cron: '51 3 * 4-10 *'
+    # Sofya 05:51 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 03:51 UTC
+    - cron: '51 3 * 11,12,1,2,3 *'
+    # Sofya 06:51 (yedek/retry) — kış saati: 04:51 UTC
+    - cron: '51 4 * 11,12,1,2,3 *'
   workflow_dispatch:
     inputs:
       mode:
