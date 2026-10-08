@@ -1,18 +1,18 @@
 name: Poligon Chat Analyzer
 on:
   schedule:
-    # Sofya 06:14 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 03:14 UTC
-    # NOT (4 Eyl 2026): dakika 00'dan 14'e kaydırıldı — GitHub Actions
-    # saatin yuvarlak dakikalarında (00/15/30/45) yoğunluk yüzünden
-    # scheduled run'ları saatlerce geciktirebiliyor, resmi tavsiyeleri
-    # garip/yuvarlak-olmayan bir dakika kullanmak.
-    - cron: '14 3 * 4-10 *'
-    # Sofya 07:14 (yedek/retry) — yaz saati: 04:14 UTC
-    - cron: '14 4 * 4-10 *'
-    # Sofya 06:14 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 04:14 UTC
-    - cron: '14 4 * 11,12,1,2,3 *'
-    # Sofya 07:14 (yedek/retry) — kış saati: 05:14 UTC
-    - cron: '14 5 * 11,12,1,2,3 *'
+    # Sofya 04:25 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 01:25 UTC
+    # NOT (8 Eki 2026): tüm tetikleyiciler 1 saat 49 dk geri çekildi
+    # (06:14 -> 04:25 / 07:14 -> 05:25). Dakika 25: yuvarlak dakikalardan
+    # (00/15/30/45) kaçınma kuralı korundu — GitHub Actions bu dakikalarda
+    # yoğunluk yüzünden scheduled run'ları saatlerce geciktirebiliyor.
+    - cron: '25 1 * 4-10 *'
+    # Sofya 05:25 (yedek/retry) — yaz saati: 02:25 UTC
+    - cron: '25 2 * 4-10 *'
+    # Sofya 04:25 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 02:25 UTC
+    - cron: '25 2 * 11,12,1,2,3 *'
+    # Sofya 05:25 (yedek/retry) — kış saati: 03:25 UTC
+    - cron: '25 3 * 11,12,1,2,3 *'
   workflow_dispatch:        # Manuel çalıştırma butonu — her zaman çalışır, atlanmaz
 permissions:
   contents: read
