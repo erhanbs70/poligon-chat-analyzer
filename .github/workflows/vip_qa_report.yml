@@ -1,18 +1,18 @@
 name: VIP QA & AI Report
 on:
   schedule:
-    # Sofya 11:58 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 08:58 UTC
-    # NOT (4 Eyl 2026): dakika 30'dan 58'e kaydırıldı — GitHub Actions
-    # saatin yuvarlak dakikalarında (00/15/30/45) yoğunluk yüzünden
-    # scheduled run'ları saatlerce geciktirebiliyor, resmi tavsiyeleri
-    # garip/yuvarlak-olmayan bir dakika kullanmak.
-    - cron: '58 8 * 4-10 *'
-    # Sofya 12:58 (yedek/retry) — yaz saati: 09:58 UTC
-    - cron: '58 9 * 4-10 *'
-    # Sofya 11:58 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 09:58 UTC
-    - cron: '58 9 * 11,12,1,2,3 *'
-    # Sofya 12:58 (yedek/retry) — kış saati: 10:58 UTC
-    - cron: '58 10 * 11,12,1,2,3 *'
+    # Sofya 09:34 (birincil) — yaz saati (UTC+3, Nis-Eki yaklaşık): 06:34 UTC
+    # NOT (8 Eki 2026): tüm tetikleyiciler 2 saat 24 dk geri çekildi
+    # (11:58 -> 09:34 / 12:58 -> 10:34). Dakika 34: yuvarlak dakikalardan
+    # (00/15/30/45) kaçınma kuralı korundu — GitHub Actions bu dakikalarda
+    # yoğunluk yüzünden scheduled run'ları saatlerce geciktirebiliyor.
+    - cron: '34 6 * 4-10 *'
+    # Sofya 10:34 (yedek/retry) — yaz saati: 07:34 UTC
+    - cron: '34 7 * 4-10 *'
+    # Sofya 09:34 (birincil) — kış saati (UTC+2, Kas-Mar yaklaşık): 07:34 UTC
+    - cron: '34 7 * 11,12,1,2,3 *'
+    # Sofya 10:34 (yedek/retry) — kış saati: 08:34 UTC
+    - cron: '34 8 * 11,12,1,2,3 *'
   workflow_dispatch:
     inputs:
       date:
