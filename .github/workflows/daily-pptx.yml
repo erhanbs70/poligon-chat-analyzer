@@ -2,10 +2,12 @@ name: Daily PPTX Report
 
 on:
   schedule:
-    # 04:35 UTC = 07:35 Europe/Sofia (summer, UTC+3) / 06:35 (winter, UTC+2)
-    # v9 Daily Report (GAS) already fires at 07:30 Sofia — this runs a few
-    # minutes after it on purpose, no dependency between the two though.
-    - cron: "35 4 * * *"
+    # 03:05 UTC = 06:05 Europe/Sofia (summer, UTC+3) / 05:05 (winter, UTC+2)
+    # NOT (8 Eki 2026): 1.5 saat geri çekildi (eski: 04:35 UTC = 07:35 Sofya yaz).
+    # v9 Daily Report (GAS) 07:30 Sofya'da çalışıyor — aralarında bağımlılık yok,
+    # bu workflow artık ondan önce çalışır. Dakika 05: yuvarlak dakikalardan
+    # (00/15/30/45) kaçınmak için (GitHub Actions gecikme yoğunluğu).
+    - cron: "5 3 * * *"
   workflow_dispatch:
     inputs:
       date:
